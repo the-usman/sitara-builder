@@ -102,6 +102,9 @@ export default defineConfig((config) => {
         transformMixedEsModules: true,
       },
     },
+    ssr: {
+      noExternal: ['react-dom'],
+    },
     optimizeDeps: {
       esbuildOptions: {
         define: {
