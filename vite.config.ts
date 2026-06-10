@@ -103,7 +103,10 @@ export default defineConfig((config) => {
       },
     },
     ssr: {
-      noExternal: ['react-dom'],
+      resolve: {
+        conditions: ['worker', 'browser', 'module', 'import', 'default'],
+        externalConditions: ['worker', 'browser'],
+      },
     },
     optimizeDeps: {
       esbuildOptions: {
