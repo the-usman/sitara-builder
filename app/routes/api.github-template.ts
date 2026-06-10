@@ -1,13 +1,15 @@
 import { json } from '@remix-run/cloudflare';
 import JSZip from 'jszip';
 
-export async function loader({ request }: { request: Request }) {
+export async function loader({ request, context }: { request: Request; context: any }) {
   const url = new URL(request.url);
   const repo = url.searchParams.get('repo');
 
   if (!repo) {
     return json({ error: 'Repository name is required' }, { status: 400 });
   }
+
+  const githubToken = context?.cloudflare?.env?.GITHUB_TOKEN || process.env.GITHUB_TOKEN;
 
   try {
     const baseUrl = 'https://api.github.com';
@@ -16,9 +18,7 @@ export async function loader({ request }: { request: Request }) {
     const releaseResponse = await fetch(`${baseUrl}/repos/${repo}/releases/latest`, {
       headers: {
         Accept: 'application/vnd.github.v3+json',
-
-        // Add GitHub token if available in environment variables
-        ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
+        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
       },
     });
 
@@ -32,7 +32,7 @@ export async function loader({ request }: { request: Request }) {
     // Fetch the zipball
     const zipResponse = await fetch(zipballUrl, {
       headers: {
-        ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
+        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
       },
     });
 
