@@ -9,7 +9,11 @@ export async function loader({ request, context }: { request: Request; context: 
     return json({ error: 'Repository name is required' }, { status: 400 });
   }
 
-  const githubToken = context?.cloudflare?.env?.GITHUB_TOKEN || process.env.GITHUB_TOKEN;
+  const githubToken =
+    context?.cloudflare?.env?.GITHUB_TOKEN ||
+    context?.cloudflare?.env?.VITE_GITHUB_ACCESS_TOKEN ||
+    process.env.GITHUB_TOKEN ||
+    process.env.VITE_GITHUB_ACCESS_TOKEN;
 
   try {
     const baseUrl = 'https://api.github.com';
@@ -23,6 +27,8 @@ export async function loader({ request, context }: { request: Request; context: 
     });
 
     if (!releaseResponse.ok) {
+      const body = await releaseResponse.text();
+      console.error(`GitHub API ${releaseResponse.status} for ${repo}:`, body, '| token present:', !!githubToken);
       throw new Error(`GitHub API error: ${releaseResponse.status}`);
     }
 
