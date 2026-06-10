@@ -57,8 +57,8 @@ const getPackageJson = () => {
     };
   } catch {
     return {
-      name: 'bolt.diy',
-      description: 'A DIY LLM interface',
+      name: 'sitara-builder',
+      description: 'Sitara Builder — AI-Powered Full-Stack Web Development',
       license: 'MIT',
       dependencies: {},
       devDependencies: {},

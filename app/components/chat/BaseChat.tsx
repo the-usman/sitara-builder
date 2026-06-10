@@ -43,6 +43,11 @@ import { ExpoQrModal } from '~/components/workbench/ExpoQrModal';
 import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
 import { useStore } from '@nanostores/react';
 import { StickToBottom, useStickToBottomContext } from '~/lib/hooks';
+import { workbenchStore } from '~/lib/stores/workbench';
+import { WORK_DIR } from '~/utils/constants';
+import { ImageGenerateModal } from './ImageGenerateModal';
+import { UserTemplates } from '~/components/templates/UserTemplates';
+import { SaveTemplateModal } from '~/components/templates/SaveTemplateModal';
 
 const TEXTAREA_MIN_HEIGHT = 76;
 
@@ -82,6 +87,7 @@ interface BaseChatProps {
   clearDeployAlert?: () => void;
   data?: JSONValue[] | undefined;
   actionRunner?: ActionRunner;
+  onSaveTemplate?: () => void;
 }
 
 export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
@@ -120,6 +126,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       clearSupabaseAlert,
       data,
       actionRunner,
+      onSaveTemplate,
     },
     ref,
   ) => {
@@ -134,6 +141,8 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const [progressAnnotations, setProgressAnnotations] = useState<ProgressAnnotation[]>([]);
     const expoUrl = useStore(expoUrlAtom);
     const [qrModalOpen, setQrModalOpen] = useState(false);
+    const [showImageGen, setShowImageGen] = useState(false);
+    const [showSaveTemplate, setShowSaveTemplate] = useState(false);
 
     useEffect(() => {
       if (expoUrl) {
@@ -287,10 +296,9 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
         if (file) {
           const reader = new FileReader();
 
-          reader.onload = (e) => {
-            const base64Image = e.target?.result as string;
-            setUploadedFiles?.([...uploadedFiles, file]);
-            setImageDataList?.([...imageDataList, base64Image]);
+          reader.onload = async (ev) => {
+            const base64Image = ev.target?.result as string;
+            await saveImageToProject(file, base64Image);
           };
           reader.readAsDataURL(file);
         }
@@ -315,16 +323,69 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
           if (file) {
             const reader = new FileReader();
 
-            reader.onload = (e) => {
-              const base64Image = e.target?.result as string;
-              setUploadedFiles?.([...uploadedFiles, file]);
-              setImageDataList?.([...imageDataList, base64Image]);
+            reader.onload = async (ev) => {
+              const base64Image = ev.target?.result as string;
+              await saveImageToProject(file, base64Image);
             };
             reader.readAsDataURL(file);
           }
 
           break;
         }
+      }
+    };
+
+    const getAiFilename = async (base64DataUrl: string): Promise<string> => {
+      try {
+        const base64 = base64DataUrl.split(',')[1];
+        const res = await fetch('/api/image-name', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageData: base64, model, provider }),
+        });
+
+        if (res.ok) {
+          const json = await res.json() as any;
+          return (json.filename as string) || 'uploaded-image';
+        }
+      } catch (_e) {
+        // fallthrough to default
+      }
+
+      return 'uploaded-image';
+    };
+
+    const saveImageToProject = async (file: File, base64Image: string) => {
+      const toastId = toast.loading('AI is naming your image…');
+
+      try {
+        const aiName = await getAiFilename(base64Image);
+        const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+        const filename = `${aiName}.${ext}`;
+
+        // Rename the File object so the AI message shows the correct name
+        const renamedFile = new File([file], filename, { type: file.type });
+        setUploadedFiles?.([...uploadedFiles, renamedFile]);
+        setImageDataList?.([...imageDataList, base64Image]);
+
+        // Write to WebContainer public/ folder
+        const arrayBuffer = await file.arrayBuffer();
+        await workbenchStore.createFile(`${WORK_DIR}/public/${filename}`, new Uint8Array(arrayBuffer));
+
+        toast.update(toastId, {
+          render: `Saved as public/${filename}`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      } catch (error) {
+        console.error('Failed to save image to project:', error);
+        toast.update(toastId, {
+          render: 'Failed to save image',
+          type: 'error',
+          isLoading: false,
+          autoClose: 3000,
+        });
       }
     };
 
@@ -524,10 +585,9 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                           if (file.type.startsWith('image/')) {
                             const reader = new FileReader();
 
-                            reader.onload = (e) => {
-                              const base64Image = e.target?.result as string;
-                              setUploadedFiles?.([...uploadedFiles, file]);
-                              setImageDataList?.([...imageDataList, base64Image]);
+                            reader.onload = async (ev) => {
+                              const base64Image = ev.target?.result as string;
+                              await saveImageToProject(file, base64Image);
                             };
                             reader.readAsDataURL(file);
                           }
@@ -591,6 +651,14 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                           <div className="i-ph:paperclip text-xl"></div>
                         </IconButton>
                         <IconButton
+                          title="Generate image with AI"
+                          className="transition-all"
+                          onClick={() => setShowImageGen(true)}
+                        >
+                          <div className="i-ph:image-square-duotone text-xl"></div>
+                        </IconButton>
+
+                        <IconButton
                           title="Enhance prompt"
                           disabled={input.length === 0 || enhancingPrompt}
                           className={classNames('transition-all', enhancingPrompt ? 'opacity-100' : '')}
@@ -613,6 +681,15 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                           disabled={isStreaming}
                         />
                         {chatStarted && <ClientOnly>{() => <ExportChatButton exportChat={exportChat} />}</ClientOnly>}
+                        {chatStarted && (
+                          <IconButton
+                            title="Save as Template"
+                            className="transition-all"
+                            onClick={() => setShowSaveTemplate(true)}
+                          >
+                            <div className="i-ph:stack-plus-duotone text-xl" />
+                          </IconButton>
+                        )}
                         <IconButton
                           title="Model Settings"
                           className={classNames('transition-all flex items-center gap-1', {
@@ -637,6 +714,27 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                       ) : null}
                       <SupabaseConnection />
                       <ExpoQrModal open={qrModalOpen} onClose={() => setQrModalOpen(false)} />
+                      <ImageGenerateModal
+                        open={showImageGen}
+                        onClose={() => setShowImageGen(false)}
+                        uploadedFiles={uploadedFiles}
+                        setUploadedFiles={setUploadedFiles}
+                        imageDataList={imageDataList}
+                        setImageDataList={setImageDataList}
+                        messages={messages as any}
+                        chatModel={model}
+                        chatProvider={provider}
+                      />
+
+                      {model && provider && (
+                        <SaveTemplateModal
+                          open={showSaveTemplate}
+                          onClose={() => setShowSaveTemplate(false)}
+                          messages={messages ?? []}
+                          model={model}
+                          provider={provider}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -660,6 +758,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                     handleSendMessage?.(event, messageInput);
                   })}
                 {!chatStarted && <StarterTemplates />}
+                {!chatStarted && <UserTemplates />}
               </div>
             </div>
           </div>

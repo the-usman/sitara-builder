@@ -1,368 +1,162 @@
-# bolt.diy
+# Sitara Builder
 
-[![bolt.diy: AI-Powered Full-Stack Web Development in the Browser](./public/social_preview_index.jpg)](https://bolt.diy)
-
-Welcome to bolt.diy, the official open source version of Bolt.new, which allows you to choose the LLM that you use for each prompt! Currently, you can use OpenAI, Anthropic, Ollama, OpenRouter, Gemini, LMStudio, Mistral, xAI, HuggingFace, DeepSeek, or Groq models - and it is easily extended to use any other model supported by the Vercel AI SDK! See the instructions below for running this locally and extending it to include more models.
-
------
-Check the [bolt.diy Docs](https://stackblitz-labs.github.io/bolt.diy/) for more offical installation instructions and more informations.
-
------
-Also [this pinned post in our community](https://thinktank.ottomator.ai/t/videos-tutorial-helpful-content/3243) has a bunch of incredible resources for running and deploying bolt.diy yourself!
-
-We have also launched an experimental agent called the "bolt.diy Expert" that can answer common questions about bolt.diy. Find it here on the [oTTomator Live Agent Studio](https://studio.ottomator.ai/).
-
-bolt.diy was originally started by [Cole Medin](https://www.youtube.com/@ColeMedin) but has quickly grown into a massive community effort to build the BEST open source AI coding assistant!
-
-## Table of Contents
-
-- [Join the Community](#join-the-community)
-- [Requested Additions](#requested-additions)
-- [Features](#features)
-- [Setup](#setup)
-- [Run the Application](#run-the-application)
-- [Available Scripts](#available-scripts)
-- [Contributing](#contributing)
-- [Roadmap](#roadmap)
-- [FAQ](#faq)
-
-## Join the community
-
-[Join the bolt.diy community here, in the oTTomator Think Tank!](https://thinktank.ottomator.ai)
-
-## Project management
-
-Bolt.diy is a community effort! Still, the core team of contributors aims at organizing the project in way that allows
-you to understand where the current areas of focus are.
-
-If you want to know what we are working on, what we are planning to work on, or if you want to contribute to the
-project, please check the [project management guide](./PROJECT.md) to get started easily.
-
-## Requested Additions
-
-- ✅ OpenRouter Integration (@coleam00)
-- ✅ Gemini Integration (@jonathands)
-- ✅ Autogenerate Ollama models from what is downloaded (@yunatamos)
-- ✅ Filter models by provider (@jasonm23)
-- ✅ Download project as ZIP (@fabwaseem)
-- ✅ Improvements to the main bolt.new prompt in `app\lib\.server\llm\prompts.ts` (@kofi-bhr)
-- ✅ DeepSeek API Integration (@zenith110)
-- ✅ Mistral API Integration (@ArulGandhi)
-- ✅ "Open AI Like" API Integration (@ZerxZ)
-- ✅ Ability to sync files (one way sync) to local folder (@muzafferkadir)
-- ✅ Containerize the application with Docker for easy installation (@aaronbolton)
-- ✅ Publish projects directly to GitHub (@goncaloalves)
-- ✅ Ability to enter API keys in the UI (@ali00209)
-- ✅ xAI Grok Beta Integration (@milutinke)
-- ✅ LM Studio Integration (@karrot0)
-- ✅ HuggingFace Integration (@ahsan3219)
-- ✅ Bolt terminal to see the output of LLM run commands (@thecodacus)
-- ✅ Streaming of code output (@thecodacus)
-- ✅ Ability to revert code to earlier version (@wonderwhy-er)
-- ✅ Chat history backup and restore functionality (@sidbetatester)
-- ✅ Cohere Integration (@hasanraiyan)
-- ✅ Dynamic model max token length (@hasanraiyan)
-- ✅ Better prompt enhancing (@SujalXplores)
-- ✅ Prompt caching (@SujalXplores)
-- ✅ Load local projects into the app (@wonderwhy-er)
-- ✅ Together Integration (@mouimet-infinisoft)
-- ✅ Mobile friendly (@qwikode)
-- ✅ Better prompt enhancing (@SujalXplores)
-- ✅ Attach images to prompts (@atrokhym)(@stijnus)
-- ✅ Added Git Clone button (@thecodacus)
-- ✅ Git Import from url (@thecodacus)
-- ✅ PromptLibrary to have different variations of prompts for different use cases (@thecodacus)
-- ✅ Detect package.json and commands to auto install & run preview for folder and git import (@wonderwhy-er)
-- ✅ Selection tool to target changes visually (@emcconnell)
-- ✅ Detect terminal Errors and ask bolt to fix it (@thecodacus)
-- ✅ Detect preview Errors and ask bolt to fix it (@wonderwhy-er)
-- ✅ Add Starter Template Options (@thecodacus)
-- ✅ Perplexity Integration (@meetpateltech)
-- ✅ AWS Bedrock Integration (@kunjabijukchhe)
-- ✅ Add a "Diff View" to see the changes (@toddyclipsgg)
-- ⬜ **HIGH PRIORITY** - Prevent bolt from rewriting files as often (file locking and diffs)
-- ⬜ **HIGH PRIORITY** - Better prompting for smaller LLMs (code window sometimes doesn't start)
-- ⬜ **HIGH PRIORITY** - Run agents in the backend as opposed to a single model call
-- ✅ Deploy directly to Netlify (@xKevIsDev)
-- ⬜ Supabase Integration
-- ⬜ Have LLM plan the project in a MD file for better results/transparency
-- ⬜ VSCode Integration with git-like confirmations
-- ⬜ Upload documents for knowledge - UI design templates, a code base to reference coding style, etc.
-- ⬜ Voice prompting
-- ⬜ Azure Open AI API Integration
-- ⬜ Vertex AI Integration
-- ⬜ Granite Integration
-- ✅ Popout Window for Web Container(@stijnus)
-- ✅ Ability to change Popout window size (@stijnus)
-
-## Features
-
-- **AI-powered full-stack web development** for **NodeJS based applications** directly in your browser.
-- **Support for multiple LLMs** with an extensible architecture to integrate additional models.
-- **Attach images to prompts** for better contextual understanding.
-- **Integrated terminal** to view output of LLM-run commands.
-- **Revert code to earlier versions** for easier debugging and quicker changes.
-- **Download projects as ZIP** for easy portability Sync to a folder on the host.
-- **Integration-ready Docker support** for a hassle-free setup.
-- **Deploy** directly to **Netlify**
-
-## Setup
-
-If you're new to installing software from GitHub, don't worry! If you encounter any issues, feel free to submit an "issue" using the provided links or improve this documentation by forking the repository, editing the instructions, and submitting a pull request. The following instruction will help you get the stable branch up and running on your local machine in no time.
-
-Let's get you up and running with the stable version of Bolt.DIY!
-
-## Quick Download
-
-[![Download Latest Release](https://img.shields.io/github/v/release/stackblitz-labs/bolt.diy?label=Download%20Bolt&sort=semver)](https://github.com/stackblitz-labs/bolt.diy/releases/latest) ← Click here to go the the latest release version!
-
-- Next **click source.zip**
-
-## Prerequisites
-
-Before you begin, you'll need to install two important pieces of software:
-
-### Install Node.js
-
-Node.js is required to run the application.
-
-1. Visit the [Node.js Download Page](https://nodejs.org/en/download/)
-2. Download the "LTS" (Long Term Support) version for your operating system
-3. Run the installer, accepting the default settings
-4. Verify Node.js is properly installed:
-   - **For Windows Users**:
-     1. Press `Windows + R`
-     2. Type "sysdm.cpl" and press Enter
-     3. Go to "Advanced" tab → "Environment Variables"
-     4. Check if `Node.js` appears in the "Path" variable
-   - **For Mac/Linux Users**:
-     1. Open Terminal
-     2. Type this command:
-        ```bash
-        echo $PATH
-        ```
-     3. Look for `/usr/local/bin` in the output
-
-## Running the Application
-
-You have two options for running Bolt.DIY: directly on your machine or using Docker.
-
-### Option 1: Direct Installation (Recommended for Beginners)
-
-1. **Install Package Manager (pnpm)**:
-
-   ```bash
-   npm install -g pnpm
-   ```
-
-2. **Install Project Dependencies**:
-
-   ```bash
-   pnpm install
-   ```
-
-3. **Start the Application**:
-
-   ```bash
-   pnpm run dev
-   ```
-   
-### Option 2: Using Docker
-
-This option requires some familiarity with Docker but provides a more isolated environment.
-
-#### Additional Prerequisite
-
-- Install Docker: [Download Docker](https://www.docker.com/)
-
-#### Steps:
-
-1. **Build the Docker Image**:
-
-   ```bash
-   # Using npm script:
-   npm run dockerbuild
-
-   # OR using direct Docker command:
-   docker build . --target bolt-ai-development
-   ```
-
-2. **Run the Container**:
-   ```bash
-   docker compose --profile development up
-   ```
-
-## Configuring API Keys and Providers
-
-### Adding Your API Keys
-
-Setting up your API keys in Bolt.DIY is straightforward:
-
-1. Open the home page (main interface)
-2. Select your desired provider from the dropdown menu
-3. Click the pencil (edit) icon
-4. Enter your API key in the secure input field
-
-![API Key Configuration Interface](./docs/images/api-key-ui-section.png)
-
-### Configuring Custom Base URLs
-
-For providers that support custom base URLs (such as Ollama or LM Studio), follow these steps:
-
-1. Click the settings icon in the sidebar to open the settings menu
-   ![Settings Button Location](./docs/images/bolt-settings-button.png)
-
-2. Navigate to the "Providers" tab
-3. Search for your provider using the search bar
-4. Enter your custom base URL in the designated field
-   ![Provider Base URL Configuration](./docs/images/provider-base-url.png)
-
-> **Note**: Custom base URLs are particularly useful when running local instances of AI models or using custom API endpoints.
-
-### Supported Providers
-
-- Ollama
-- LM Studio
-- OpenAILike
-
-## Setup Using Git (For Developers only)
-
-This method is recommended for developers who want to:
-
-- Contribute to the project
-- Stay updated with the latest changes
-- Switch between different versions
-- Create custom modifications
-
-#### Prerequisites
-
-1. Install Git: [Download Git](https://git-scm.com/downloads)
-
-#### Initial Setup
-
-1. **Clone the Repository**:
-
-   ```bash
-   git clone -b stable https://github.com/stackblitz-labs/bolt.diy.git
-   ```
-
-2. **Navigate to Project Directory**:
-
-   ```bash
-   cd bolt.diy
-   ```
-
-3. **Install Dependencies**:
-
-   ```bash
-   pnpm install
-   ```
-
-4. **Start the Development Server**:
-   ```bash
-   pnpm run dev
-   ```
-
-5. **(OPTIONAL)** Switch to the Main Branch if you want to use pre-release/testbranch:
-   ```bash
-   git checkout main
-   pnpm install
-   pnpm run dev
-   ```
-  Hint: Be aware that this can have beta-features and more likely got bugs than the stable release
-
->**Open the WebUI to test (Default: http://localhost:5173)**
->   - Beginngers: 
->     - Try to use a sophisticated Provider/Model like Anthropic with Claude Sonnet 3.x Models to get best results
->     - Explanation: The System Prompt currently implemented in bolt.diy cant cover the best performance for all providers and models out there. So it works better with some models, then other, even if the models itself are perfect for >programming
->     - Future: Planned is a Plugin/Extentions-Library so there can be different System Prompts for different Models, which will help to get better results
-
-#### Staying Updated
-
-To get the latest changes from the repository:
-
-1. **Save Your Local Changes** (if any):
-
-   ```bash
-   git stash
-   ```
-
-2. **Pull Latest Updates**:
-
-   ```bash
-   git pull 
-   ```
-
-3. **Update Dependencies**:
-
-   ```bash
-   pnpm install
-   ```
-
-4. **Restore Your Local Changes** (if any):
-   ```bash
-   git stash pop
-   ```
-
-#### Troubleshooting Git Setup
-
-If you encounter issues:
-
-1. **Clean Installation**:
-
-   ```bash
-   # Remove node modules and lock files
-   rm -rf node_modules pnpm-lock.yaml
-
-   # Clear pnpm cache
-   pnpm store prune
-
-   # Reinstall dependencies
-   pnpm install
-   ```
-
-2. **Reset Local Changes**:
-   ```bash
-   # Discard all local changes
-   git reset --hard origin/main
-   ```
-
-Remember to always commit your local changes or stash them before pulling updates to avoid conflicts.
+**Sitara Builder** is a fork of [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) — an AI-powered full-stack web development platform built on top of WebContainers. Sitara Builder extends the original with a rich set of production-ready skills, UI/UX intelligence, and full-stack scaffolding capabilities.
 
 ---
 
-## Available Scripts
+## What's New in Sitara Builder
 
-- **`pnpm run dev`**: Starts the development server.
-- **`pnpm run build`**: Builds the project.
-- **`pnpm run start`**: Runs the built application locally using Wrangler Pages.
-- **`pnpm run preview`**: Builds and runs the production build locally.
-- **`pnpm test`**: Runs the test suite using Vitest.
-- **`pnpm run typecheck`**: Runs TypeScript type checking.
-- **`pnpm run typegen`**: Generates TypeScript types using Wrangler.
-- **`pnpm run deploy`**: Deploys the project to Cloudflare Pages.
-- **`pnpm run lint:fix`**: Automatically fixes linting issues.
+### 1. UI/UX Design Intelligence
+The AI now produces visually polished, production-quality interfaces by default:
+- Premium typography hierarchy, 8pt spacing grid, design tokens
+- Dark/light mode with correct contrast ratios (4.5:1 minimum)
+- Glass morphism, gradient borders, animated gradients
+- Mobile-first responsive layouts at 375 / 768 / 1024 / 1440px
+- Pre-delivery checklist enforced on every generation (focus states, alt text, cursor-pointer, etc.)
+
+### 2. Scroll & Horizontal Scroll Animations (GSAP)
+Correct GSAP + ScrollTrigger patterns that prevent vertical/horizontal scroll bleed:
+- **Fixed horizontal scroll** — animates the track container (`x: -totalDist`), not individual panels; uses `track.scrollWidth - window.innerWidth` for the correct end distance
+- Fade-up sections, staggered grid cards, parallax hero backgrounds, counter animations
+- `anticipatePin: 1` and `invalidateOnRefresh: true` on every pinned section
+- `prefers-reduced-motion` respected on all animations
+
+### 3. Three.js Interactive 3D Skill
+Build fully interactive 3D scenes from scratch — no external model files, no iframes:
+- CDN importmap setup (Three.js 0.168, OrbitControls, RGBELoader)
+- PBR, glass, toon, and custom GLSL shader materials
+- Lighting recipes: studio, neon, sunset, product showcase
+- **Scroll-driven 3D** — 3 patterns:
+  - Proxy object (GSAP writes, Three.js reads in rAF loop)
+  - GSAP ticker as render loop (direct tween of `mesh.rotation`, `camera.position`)
+  - Multi-section 3D story (color/scale/rotation per section)
+- **Mouse-interactive 3D** — 4 patterns:
+  - Raycasting hover (emissive glow + cursor change)
+  - Drag rotation with inertia/friction (`velX *= 0.92`)
+  - World-space cursor tracking via `unproject()`
+  - Scroll + mouse combined parallax
+- Auto-adds 3D to hero sections, product showcases, portfolio headers, SaaS landing pages
+
+### 4. AI-Powered Image Generation
+Generate images directly within the chat using AI models:
+- Accessible via the toolbar (image generation icon)
+- Prompt suggestions powered by AI
+- Generated images saved automatically to the project
+
+### 5. Full-Stack Scaffolding Skill (Next.js 14 + FastAPI)
+The AI asks for required credentials before building any full-stack project:
+
+**Variable collection protocol** — one upfront message listing every env var needed:
+
+| Service | Variables collected |
+|---|---|
+| MongoDB | `MONGODB_URI` |
+| Supabase | `NEXT_PUBLIC_SUPABASE_URL`, anon key, service role key |
+| PostgreSQL / MySQL | `DATABASE_URL` |
+| Auth (NextAuth / JWT) | `NEXTAUTH_SECRET` / `SECRET_KEY` |
+| Stripe | `STRIPE_SECRET_KEY`, publishable key, webhook secret |
+| Email (Resend/SendGrid) | API key |
+| Cloudinary, AWS S3, Pusher, OpenAI | respective keys |
+
+**Demo Mode** — type `"demo"` for any variable you don't have:
+- PostgreSQL → SQLite via Prisma (zero config, file-based, no account needed)
+- MongoDB → lowdb (JSON file database)
+- Redis → in-memory Map singleton
+- Email → console log stub with on-screen output
+- App shows a yellow `⚠️ Demo Mode` banner
+- Swap to production by editing `.env` only — no code changes
+
+**Next.js 14 App Router scaffold includes:**
+- Folder structure (auth routes, dashboard, API routes, lib, components)
+- Prisma singleton with SQLite demo / PostgreSQL production swap
+- API route pattern with Zod validation + session auth
+- NextAuth credentials provider with bcrypt
+- `middleware.ts` for route protection
+- `.env.local` template auto-generated
+
+**FastAPI scaffold includes:**
+- pydantic-settings `BaseSettings` reading all env vars from `.env`
+- Async SQLAlchemy with aiosqlite demo / asyncpg production swap
+- Auto-creates all tables on startup
+- JWT auth router with OAuth2PasswordBearer
+- CORS middleware configured
+- `requirements.txt` and `.env` template auto-generated
+
+### 6. Project Templates
+Browse and start from curated project templates directly in the UI.
+
+### 7. Rebranded as Sitara Builder
+- App name changed from bolt.diy → **Sitara Builder**
+- Domain: `sitara-builder` (instead of `bolt-diy`)
 
 ---
 
-## Contributing
+## Getting Started
 
-We welcome contributions! Check out our [Contributing Guide](CONTRIBUTING.md) to get started.
+### Prerequisites
+- Node.js 18+
+- pnpm
+
+### Installation
+
+```bash
+git clone https://github.com/the-usman/sitara-builder.git
+cd sitara-builder
+pnpm install
+```
+
+### Environment Setup
+
+Copy the example env file and fill in your API keys:
+
+```bash
+cp .env.example .env.local
+```
+
+Required — add at least one LLM provider key:
+```env
+ANTHROPIC_API_KEY=your_key_here
+# or
+OPENAI_API_KEY=your_key_here
+# or any other supported provider
+```
+
+### Run Development Server
+
+```bash
+pnpm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173).
 
 ---
 
-## Roadmap
+## Supported LLM Providers
 
-Explore upcoming features and priorities on our [Roadmap](https://roadmap.sh/r/ottodev-roadmap-2ovzo).
+Sitara Builder supports all providers from the original bolt.diy:
+
+- **Anthropic** (Claude)
+- **OpenAI** (GPT-4, o1)
+- **Google** (Gemini)
+- **Mistral**
+- **Groq**
+- **Ollama** (local models)
+- **OpenRouter**
+- **Perplexity**
+- **xAI** (Grok)
+- **Cohere**
+- **HuggingFace**
+- And more via the provider settings panel
 
 ---
 
-## FAQ
+## Original Project
 
-For answers to common questions, issues, and to see a list of recommended models, visit our [FAQ Page](FAQ.md).
+Sitara Builder is built on top of [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) by StackBlitz Labs.
+All original bolt.diy features are preserved.
 
+---
 
-# Licensing
-**Who needs a commercial WebContainer API license?**
+## License
 
-bolt.diy source code is distributed as MIT, but it uses WebContainers API that [requires licensing](https://webcontainers.io/enterprise) for production usage in a commercial, for-profit setting. (Prototypes or POCs do not require a commercial license.) If you're using the API to meet the needs of your customers, prospective customers, and/or employees, you need a license to ensure compliance with our Terms of Service. Usage of the API in violation of these terms may result in your access being revoked.
+MIT — see [LICENSE](./LICENSE) for details.

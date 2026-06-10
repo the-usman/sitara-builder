@@ -313,6 +313,11 @@ export const ChatImpl = memo(
       // If no locked items, proceed normally with the original message
       const finalMessageContent = messageContent;
 
+      const imageFilesNote =
+        uploadedFiles.length > 0
+          ? `\n\n[Uploaded images have been automatically saved to the project's public/ folder: ${uploadedFiles.map((f) => `public/${f.name}`).join(', ')}. Reference them in your code using these paths.]`
+          : '';
+
       runAnimation();
 
       if (!chatStarted) {
@@ -345,7 +350,7 @@ export const ChatImpl = memo(
                   content: [
                     {
                       type: 'text',
-                      text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}`,
+                      text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
                     },
                     ...imageDataList.map((imageData) => ({
                       type: 'image',
@@ -390,7 +395,7 @@ export const ChatImpl = memo(
             content: [
               {
                 type: 'text',
-                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}`,
+                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
               },
               ...imageDataList.map((imageData) => ({
                 type: 'image',
@@ -429,7 +434,7 @@ export const ChatImpl = memo(
           content: [
             {
               type: 'text',
-              text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}`,
+              text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}`,
             },
             ...imageDataList.map((imageData) => ({
               type: 'image',
@@ -445,7 +450,7 @@ export const ChatImpl = memo(
           content: [
             {
               type: 'text',
-              text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}`,
+              text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
             },
             ...imageDataList.map((imageData) => ({
               type: 'image',

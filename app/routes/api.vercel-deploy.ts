@@ -1,4 +1,4 @@
-import { type ActionFunctionArgs, type LoaderFunctionArgs, json } from '@remix-run/cloudflare';
+﻿import { type ActionFunctionArgs, type LoaderFunctionArgs, json } from '@remix-run/cloudflare';
 import type { VercelProjectInfo } from '~/types/vercel';
 
 // Add loader function to handle GET requests
@@ -80,7 +80,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     // If no projectId provided, create a new project
     if (!targetProjectId) {
-      const projectName = `bolt-diy-${chatId}-${Date.now()}`;
+      const projectName = `sitara-builder-${chatId}-${Date.now()}`;
       const createProjectResponse = await fetch('https://api.vercel.com/v9/projects', {
         method: 'POST',
         headers: {
@@ -127,7 +127,7 @@ export async function action({ request }: ActionFunctionArgs) {
         };
       } else {
         // If project doesn't exist, create a new one
-        const projectName = `bolt-diy-${chatId}-${Date.now()}`;
+        const projectName = `sitara-builder-${chatId}-${Date.now()}`;
         const createProjectResponse = await fetch('https://api.vercel.com/v9/projects', {
           method: 'POST',
           headers: {

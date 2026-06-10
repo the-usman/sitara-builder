@@ -1,14 +1,14 @@
 {
-  "name": "bolt",
-  "description": "An AI Agent",
+  "name": "sitara-builder",
+  "description": "Sitara Builder — AI-Powered Full-Stack Web Development",
   "private": true,
   "license": "MIT",
   "sideEffects": false,
   "type": "module",
   "version": "1.0.0",
   "author": {
-    "name": "bolt.diy team",
-    "email": "maintainers@bolt.diy"
+    "name": "Sitara Builder",
+    "email": "hello@sitara.builder"
   },
   "scripts": {
     "deploy": "npm run build && wrangler pages deploy",
