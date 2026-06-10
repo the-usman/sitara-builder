@@ -87,6 +87,7 @@ export function SketchfabModal({ open, onClose, sendMessage, messages, chatModel
       const newResults: SketchfabModel[] = data.results ?? [];
       setResults((prev) => (cursor ? [...prev, ...newResults] : newResults));
       setNextCursor(data.nextCursor ?? null);
+
       return newResults;
     } catch (e: any) {
       setError(e.message || 'Search failed');
@@ -176,8 +177,9 @@ export function SketchfabModal({ open, onClose, sendMessage, messages, chatModel
       const res = await fetch(`/api/sketchfab-download?uid=${selected.uid}`);
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as any;
+        const err = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as any;
         toast.error(`Download failed: ${err.error || res.statusText}`, { autoClose: 7000 });
+
         return;
       }
 
@@ -185,11 +187,12 @@ export function SketchfabModal({ open, onClose, sendMessage, messages, chatModel
       const uint8 = new Uint8Array(buffer);
 
       // Sanitize model name → filename
-      const safeName = selected.name
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 50) || selected.uid;
+      const safeName =
+        selected.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 50) || selected.uid;
 
       const filePath = `public/models/${safeName}.glb`;
 
@@ -281,7 +284,11 @@ export function SketchfabModal({ open, onClose, sendMessage, messages, chatModel
               <button
                 type="button"
                 onClick={handleCc0Toggle}
-                title={cc0Only ? 'Showing CC0 only (free to use) — click to show all licenses' : 'Showing all licenses — click for CC0 only'}
+                title={
+                  cc0Only
+                    ? 'Showing CC0 only (free to use) — click to show all licenses'
+                    : 'Showing all licenses — click for CC0 only'
+                }
                 className={classNames(
                   'flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs border transition-all shrink-0',
                   cc0Only
@@ -443,11 +450,7 @@ export function SketchfabModal({ open, onClose, sendMessage, messages, chatModel
               <div className="flex flex-col items-center gap-3 py-12 text-bolt-elements-textTertiary">
                 <div className="i-ph:cube text-5xl opacity-30" />
                 <p className="text-sm">Search for 3D models above</p>
-                {cc0Only && (
-                  <p className="text-xs opacity-60">
-                    Showing CC0 only — toggle off for more results
-                  </p>
-                )}
+                {cc0Only && <p className="text-xs opacity-60">Showing CC0 only — toggle off for more results</p>}
                 {hasContext && (
                   <p className="text-xs opacity-60">
                     or click <span className="text-purple-400">Auto-select</span> to let AI choose
@@ -464,24 +467,20 @@ export function SketchfabModal({ open, onClose, sendMessage, messages, chatModel
                 {/* Larger thumbnail preview */}
                 {selected.thumbnail && (
                   <div className="w-16 h-16 rounded-lg overflow-hidden shrink-0 border border-bolt-elements-borderColor bg-bolt-elements-background-depth-3">
-                    <img
-                      src={selected.thumbnail}
-                      alt={selected.name}
-                      className="w-full h-full object-cover"
-                    />
+                    <img src={selected.thumbnail} alt={selected.name} className="w-full h-full object-cover" />
                   </div>
                 )}
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-bolt-elements-textPrimary truncate">{selected.name}</p>
-                  <p className="text-xs text-bolt-elements-textTertiary mt-0.5">
-                    @{selected.author}
-                  </p>
+                  <p className="text-xs text-bolt-elements-textTertiary mt-0.5">@{selected.author}</p>
                   <div className="flex items-center gap-2 mt-1">
                     <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-500/20 text-green-400 border border-green-500/30">
                       CC0
                     </span>
-                    <span className="text-[10px] text-bolt-elements-textTertiary">Free to use, no attribution required</span>
+                    <span className="text-[10px] text-bolt-elements-textTertiary">
+                      Free to use, no attribution required
+                    </span>
                   </div>
                 </div>
 

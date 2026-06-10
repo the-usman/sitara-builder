@@ -37,13 +37,14 @@ export async function action({ context, request }: ActionFunctionArgs) {
     });
 
     const raw = await result.text;
-    const filename = raw
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 50) || 'uploaded-image';
+    const filename =
+      raw
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 50) || 'uploaded-image';
 
     return new Response(JSON.stringify({ filename }), {
       headers: { 'Content-Type': 'application/json' },

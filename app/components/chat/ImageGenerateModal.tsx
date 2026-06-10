@@ -125,6 +125,7 @@ export function ImageGenerateModal({
 
   const handleProviderChange = (id: ProviderId) => {
     setProviderId(id);
+
     const p = PROVIDERS.find((p) => p.id === id)!;
     setModelId(p.models[0].id);
     setGenerated(null);
@@ -151,7 +152,7 @@ export function ImageGenerateModal({
         throw new Error(await res.text());
       }
 
-      const json = await res.json() as any;
+      const json = (await res.json()) as any;
       setGenerated({ data: json.imageData, filename: json.filename });
     } catch (err: any) {
       setError(err.message || 'Generation failed.');
@@ -325,9 +326,7 @@ export function ImageGenerateModal({
           {loading && (
             <div className="flex flex-col items-center gap-3 py-8">
               <div className="i-svg-spinners:90-ring-with-bg text-purple-400 text-4xl animate-spin" />
-              <p className="text-bolt-elements-textSecondary text-sm">
-                Generating with {provider.label}…
-              </p>
+              <p className="text-bolt-elements-textSecondary text-sm">Generating with {provider.label}…</p>
             </div>
           )}
 
@@ -341,8 +340,7 @@ export function ImageGenerateModal({
                 className="w-full rounded-lg border border-bolt-elements-borderColor object-cover max-h-72"
               />
               <p className="text-xs text-bolt-elements-textTertiary">
-                Will be saved as{' '}
-                <span className="text-purple-400 font-mono">public/{generated.filename}</span>
+                Will be saved as <span className="text-purple-400 font-mono">public/{generated.filename}</span>
               </p>
             </div>
           )}
@@ -363,7 +361,10 @@ export function ImageGenerateModal({
               {generated && !loading ? (
                 <>
                   <button
-                    onClick={() => { setGenerated(null); setError(''); }}
+                    onClick={() => {
+                      setGenerated(null);
+                      setError('');
+                    }}
                     className="px-4 py-2 rounded-lg text-sm border border-bolt-elements-borderColor text-bolt-elements-textSecondary hover:border-purple-400 transition-colors"
                   >
                     Regenerate

@@ -30,7 +30,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
     .filter((m) => m.role === 'user')
     .map((m) => {
       const content = Array.isArray(m.content)
-        ? m.content.find((c: any) => c.type === 'text')?.text ?? ''
+        ? (m.content.find((c: any) => c.type === 'text')?.text ?? '')
         : m.content;
       return (content as string).replace(/^\[Model:.*?\]\n\n\[Provider:.*?\]\n\n/s, '').trim();
     })

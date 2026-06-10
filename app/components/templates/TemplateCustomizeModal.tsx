@@ -98,7 +98,9 @@ export function TemplateCustomizeModal({ open, onClose, template }: Props) {
                       : 'bg-transparent border-bolt-elements-borderColor text-bolt-elements-textSecondary hover:border-purple-400',
                   )}
                 >
-                  <div className={t === 'light' ? 'i-ph:sun-duotone text-yellow-400' : 'i-ph:moon-duotone text-blue-400'} />
+                  <div
+                    className={t === 'light' ? 'i-ph:sun-duotone text-yellow-400' : 'i-ph:moon-duotone text-blue-400'}
+                  />
                   {t.charAt(0).toUpperCase() + t.slice(1)} Theme
                 </button>
               ))}

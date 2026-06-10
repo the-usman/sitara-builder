@@ -75,11 +75,7 @@ export function UserTemplates() {
         </div>
       </div>
 
-      <TemplateCustomizeModal
-        open={customizeOpen}
-        onClose={() => setCustomizeOpen(false)}
-        template={selected}
-      />
+      <TemplateCustomizeModal open={customizeOpen} onClose={() => setCustomizeOpen(false)} template={selected} />
     </>
   );
 }

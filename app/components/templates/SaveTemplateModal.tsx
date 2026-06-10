@@ -40,7 +40,7 @@ export function SaveTemplateModal({ open, onClose, messages, model, provider }: 
         throw new Error(await res.text());
       }
 
-      const json = await res.json() as any;
+      const json = (await res.json()) as any;
       setGeneratedPrompt(json.templatePrompt);
       setStep('preview');
     } catch (err: any) {
@@ -76,7 +76,8 @@ export function SaveTemplateModal({ open, onClose, messages, model, provider }: 
           {step === 'form' && (
             <>
               <p className="text-sm text-bolt-elements-textSecondary">
-                The AI will analyze your project and generate a reusable template prompt with customizable placeholders for theme, industry, brand name, and colors.
+                The AI will analyze your project and generate a reusable template prompt with customizable placeholders
+                for theme, industry, brand name, and colors.
               </p>
 
               <div className="flex flex-col gap-3">
@@ -147,9 +148,12 @@ export function SaveTemplateModal({ open, onClose, messages, model, provider }: 
                 />
                 <p className="text-xs text-bolt-elements-textTertiary">
                   You can edit this prompt. The <span className="text-purple-400 font-mono">{'{'}</span>THEME
-                  <span className="text-purple-400 font-mono">{'}'}</span>, <span className="text-purple-400 font-mono">{'{'}</span>INDUSTRY
-                  <span className="text-purple-400 font-mono">{'}'}</span>, <span className="text-purple-400 font-mono">{'{'}</span>BRAND_NAME
-                  <span className="text-purple-400 font-mono">{'}'}</span>, and <span className="text-purple-400 font-mono">{'{'}</span>PRIMARY_COLOR
+                  <span className="text-purple-400 font-mono">{'}'}</span>,{' '}
+                  <span className="text-purple-400 font-mono">{'{'}</span>INDUSTRY
+                  <span className="text-purple-400 font-mono">{'}'}</span>,{' '}
+                  <span className="text-purple-400 font-mono">{'{'}</span>BRAND_NAME
+                  <span className="text-purple-400 font-mono">{'}'}</span>, and{' '}
+                  <span className="text-purple-400 font-mono">{'{'}</span>PRIMARY_COLOR
                   <span className="text-purple-400 font-mono">{'}'}</span> will be replaced when used.
                 </p>
               </div>

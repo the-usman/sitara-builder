@@ -131,7 +131,9 @@ async function generateWithGemini({
   slug: string;
 }) {
   const geminiKey =
-    apiKeys?.GOOGLE_GENERATIVE_AI_API_KEY || env?.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    apiKeys?.GOOGLE_GENERATIVE_AI_API_KEY ||
+    env?.GOOGLE_GENERATIVE_AI_API_KEY ||
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 
   if (!geminiKey) {
     throw new Response('GOOGLE_GENERATIVE_AI_API_KEY not configured. Add it in Settings → API Keys.', { status: 401 });

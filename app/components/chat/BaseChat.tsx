@@ -345,7 +345,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
         });
 
         if (res.ok) {
-          const json = await res.json() as any;
+          const json = (await res.json()) as any;
           return (json.filename as string) || 'uploaded-image';
         }
       } catch (_e) {

@@ -32,6 +32,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const results = (data.results ?? []).map((m: any) => {
       const images: any[] = m.thumbnails?.images ?? [];
       const thumb = images.find((i) => i.width >= 200) ?? images[0];
+
       return {
         uid: m.uid as string,
         name: m.name as string,

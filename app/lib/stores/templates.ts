@@ -22,6 +22,7 @@ export function saveUserTemplate(data: Pick<UserTemplate, 'name' | 'description'
   const next = [...userTemplatesStore.get(), template];
   setLocalStorage(STORAGE_KEY, next);
   userTemplatesStore.set(next);
+
   return template;
 }
 

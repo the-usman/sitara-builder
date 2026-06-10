@@ -6,7 +6,10 @@ import { Header } from '~/components/header/Header';
 import BackgroundRays from '~/components/ui/BackgroundRays';
 
 export const meta: MetaFunction = () => {
-  return [{ title: 'Sitara Builder' }, { name: 'description', content: 'Build full-stack web apps instantly with Sitara, your AI development assistant' }];
+  return [
+    { title: 'Sitara Builder' },
+    { name: 'description', content: 'Build full-stack web apps instantly with Sitara, your AI development assistant' },
+  ];
 };
 
 export const loader = () => json({});
