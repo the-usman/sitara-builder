@@ -18,12 +18,15 @@ export async function loader({ request, context }: { request: Request; context: 
   try {
     const baseUrl = 'https://api.github.com';
 
+    const commonHeaders: Record<string, string> = {
+      Accept: 'application/vnd.github.v3+json',
+      'User-Agent': 'sitara-builder/1.0',
+      ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
+    };
+
     // Get the latest release
     const releaseResponse = await fetch(`${baseUrl}/repos/${repo}/releases/latest`, {
-      headers: {
-        Accept: 'application/vnd.github.v3+json',
-        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
-      },
+      headers: commonHeaders,
     });
 
     if (!releaseResponse.ok) {
@@ -37,9 +40,7 @@ export async function loader({ request, context }: { request: Request; context: 
 
     // Fetch the zipball
     const zipResponse = await fetch(zipballUrl, {
-      headers: {
-        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
-      },
+      headers: commonHeaders,
     });
 
     if (!zipResponse.ok) {
