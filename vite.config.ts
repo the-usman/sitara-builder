@@ -138,7 +138,7 @@ export default defineConfig((config) => {
           return null;
         },
       },
-      config.mode === 'development' && remixCloudflareDevProxy(),
+      config.mode === 'development' && process.env.CLOUDFLARE_DEV_PROXY !== 'false' && remixCloudflareDevProxy(),
       remixVitePlugin({
         future: {
           v3_fetcherPersist: true,
