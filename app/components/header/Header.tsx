@@ -1,5 +1,6 @@
 import { useStore } from '@nanostores/react';
 import { ClientOnly } from 'remix-utils/client-only';
+import { Form } from '@remix-run/react';
 import { chatStore } from '~/lib/stores/chat';
 import { classNames } from '~/utils/classNames';
 import { HeaderActionButtons } from './HeaderActionButtons.client';
@@ -37,6 +38,21 @@ export function Header() {
           </ClientOnly>
         </>
       )}
+      {!chat.started && <div className="flex-1" />}
+      <ClientOnly>
+        {() => (
+          <Form method="post" action="/api/auth/logout">
+            <button
+              type="submit"
+              title="Sign out"
+              className="ml-3 flex items-center gap-1.5 px-3 py-1.5 text-xs text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary border border-bolt-elements-borderColor hover:border-bolt-elements-borderColorActive rounded-lg transition-colors"
+            >
+              <div className="i-ph:sign-out text-base" />
+              <span>Sign out</span>
+            </button>
+          </Form>
+        )}
+      </ClientOnly>
     </header>
   );
 }

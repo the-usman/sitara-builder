@@ -5,6 +5,7 @@ import { BaseChat } from '~/components/chat/BaseChat';
 import { GitUrlImport } from '~/components/git/GitUrlImport.client';
 import { Header } from '~/components/header/Header';
 import BackgroundRays from '~/components/ui/BackgroundRays';
+import { requireAuth } from '~/lib/auth.server';
 
 export const meta: MetaFunction = () => {
   return [
@@ -14,6 +15,7 @@ export const meta: MetaFunction = () => {
 };
 
 export async function loader(args: LoaderFunctionArgs) {
+  await requireAuth(args.request, (args.context as any).cloudflare?.env);
   return json({ url: args.params.url });
 }
 
