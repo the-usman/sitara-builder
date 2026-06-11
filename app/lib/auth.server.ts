@@ -1,15 +1,7 @@
-import dns from 'dns';
 import { MongoClient } from 'mongodb';
 import { SignJWT, jwtVerify } from 'jose';
 import { redirect } from '@remix-run/cloudflare';
 import { randomBytes, scrypt, timingSafeEqual } from 'crypto';
-
-// Only override DNS in Node.js dev — Cloudflare Workers handles SRV natively
-try {
-  dns.setServers(['8.8.8.8', '1.1.1.1']);
-} catch {
-  // Swallow: Workers runtime does not support dns.setServers
-}
 
 function scryptAsync(password: string | Buffer, salt: Buffer, keylen: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
