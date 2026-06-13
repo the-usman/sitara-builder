@@ -11,6 +11,9 @@ import type { ContextAnnotation, ProgressAnnotation } from '~/types/context';
 import { WORK_DIR } from '~/utils/constants';
 import { createSummary } from '~/lib/.server/llm/create-summary';
 import { extractPropertiesFromMessage } from '~/lib/.server/llm/utils';
+import { getAuthToken, verifyJwt } from '~/lib/auth.server';
+import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
+import { computeCost } from '~/lib/.server/llm/model-pricing';
 
 export async function action(args: ActionFunctionArgs) {
   return chatAction(args);
@@ -37,23 +40,37 @@ function parseCookies(cookieHeader: string): Record<string, string> {
 }
 
 async function chatAction({ context, request }: ActionFunctionArgs) {
-  const { messages, files, promptId, contextOptimization, supabase } = await request.json<{
-    messages: Messages;
-    files: any;
-    promptId?: string;
-    contextOptimization: boolean;
-    supabase?: {
-      isConnected: boolean;
-      hasSelectedProject: boolean;
-      credentials?: {
-        anonKey?: string;
-        supabaseUrl?: string;
+  const { messages, files, promptId, contextOptimization, supabase, chatId, chatDescription, selectedClient } =
+    await request.json<{
+      messages: Messages;
+      files: any;
+      promptId?: string;
+      contextOptimization: boolean;
+      chatId?: string;
+      chatDescription?: string;
+      selectedClient?: ChatClient;
+      supabase?: {
+        isConnected: boolean;
+        hasSelectedProject: boolean;
+        credentials?: {
+          anonKey?: string;
+          supabaseUrl?: string;
+        };
       };
-    };
-  }>();
+    }>();
 
   const cookieHeader = request.headers.get('Cookie');
   const apiKeys = JSON.parse(parseCookies(cookieHeader || '').apiKeys || '{}');
+
+  const env = (context as any).cloudflare?.env;
+  const authUser = await verifyJwt(getAuthToken(request) || '', env);
+
+  /*
+   * Stable tracking ID: first user message ID is always present and consistent across all
+   * messages in a conversation — safe fallback when clientChatId hasn't been set yet.
+   */
+  const firstUserMsgId = messages.filter((m) => m.role === 'user')[0]?.id;
+  const trackingId = firstUserMsgId;
   const providerSettings: Record<string, IProviderSetting> = JSON.parse(
     parseCookies(cookieHeader || '').providers || '{}',
   );
@@ -65,6 +82,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
     promptTokens: 0,
     totalTokens: 0,
   };
+  let loadedSkills: string[] = [];
   const encoder: TextEncoder = new TextEncoder();
   let progressCounter: number = 1;
 
@@ -200,14 +218,26 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
             }
 
             if (finishReason !== 'length') {
+              const lastUserMsg = messages.filter((x) => x.role === 'user').slice(-1)[0];
+              const { model: usageModel, provider: usageProvider } = extractPropertiesFromMessage(lastUserMsg);
+              const cost = computeCost(
+                usageModel,
+                cumulativeUsage.promptTokens,
+                cumulativeUsage.completionTokens,
+              );
+
               dataStream.writeMessageAnnotation({
                 type: 'usage',
                 value: {
                   completionTokens: cumulativeUsage.completionTokens,
                   promptTokens: cumulativeUsage.promptTokens,
                   totalTokens: cumulativeUsage.totalTokens,
+                  promptCost: cost.promptCost,
+                  completionCost: cost.completionCost,
+                  totalCost: cost.totalCost,
                 },
               });
+              dataStream.writeMessageAnnotation({ type: 'skillsUsed', skills: loadedSkills } as any);
               dataStream.writeData({
                 type: 'progress',
                 label: 'response',
@@ -217,7 +247,53 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               } satisfies ProgressAnnotation);
               await new Promise((resolve) => setTimeout(resolve, 0));
 
-              // stream.close();
+              // Track every chat in MongoDB
+              console.log(
+                '[chat-tracker] onFinish hit — authUser:',
+                authUser?.email,
+                '| trackingId:',
+                trackingId,
+                '| selectedClient:',
+                JSON.stringify(selectedClient),
+              );
+
+              if (!authUser) {
+                console.error('[chat-tracker] SKIP: no authUser');
+              } else if (!trackingId) {
+                console.error('[chat-tracker] SKIP: no trackingId');
+              } else if (!selectedClient) {
+                console.error('[chat-tracker] SKIP: selectedClient is null/undefined');
+              } else {
+                const modelKey = `${usageModel}:${usageProvider}`;
+                console.log(
+                  `[chat-tracker] saving — trackingId: ${trackingId}, client: ${selectedClient.clientName}, model: ${modelKey}, cost: $${cost.totalCost.toFixed(4)}`,
+                );
+                upsertProject(
+                  trackingId,
+                  chatDescription || trackingId,
+                  { userId: authUser.userId, email: authUser.email, name: authUser.name, role: authUser.role },
+                  selectedClient,
+                  modelKey,
+                  {
+                    model: usageModel,
+                    provider: usageProvider,
+                    promptTokens: cumulativeUsage.promptTokens,
+                    completionTokens: cumulativeUsage.completionTokens,
+                    totalTokens: cumulativeUsage.totalTokens,
+                    promptCost: cost.promptCost,
+                    completionCost: cost.completionCost,
+                    cost: cost.totalCost,
+                  },
+                  chatId,
+                )
+                  .then(() => {
+                    console.log('[chat-tracker] upsert SUCCESS for', trackingId);
+                  })
+                  .catch((err) => {
+                    console.error('[chat-tracker] upsert FAILED:', String(err));
+                  });
+              }
+
               return;
             }
 
@@ -250,6 +326,9 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               contextFiles: filteredFiles,
               summary,
               messageSliceId,
+              onSkillsLoaded: (skills) => {
+                loadedSkills = skills;
+              },
             });
 
             result.mergeIntoDataStream(dataStream);
@@ -259,6 +338,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
                 if (part.type === 'error') {
                   const error: any = part.error;
                   logger.error(`${error}`);
+                  dataStream.writeData({ type: 'error', error: classifyProviderError(error) });
 
                   return;
                 }
@@ -289,6 +369,9 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
           contextFiles: filteredFiles,
           summary,
           messageSliceId,
+          onSkillsLoaded: (skills) => {
+            loadedSkills = skills;
+          },
         });
 
         (async () => {
@@ -296,6 +379,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
             if (part.type === 'error') {
               const error: any = part.error;
               logger.error(`${error}`);
+              dataStream.writeData({ type: 'error', error: classifyProviderError(error) });
 
               return;
             }
@@ -354,16 +438,54 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
   } catch (error: any) {
     logger.error(error);
 
-    if (error.message?.includes('API key')) {
-      throw new Response('Invalid or missing API key', {
-        status: 401,
-        statusText: 'Unauthorized',
-      });
+    const classified = classifyProviderError(error);
+
+    if (classified.code === 'credits_exhausted') {
+      throw new Response(classified.message, { status: 402, statusText: 'Payment Required' });
     }
 
-    throw new Response(null, {
-      status: 500,
-      statusText: 'Internal Server Error',
-    });
+    if (classified.code === 'invalid_api_key') {
+      throw new Response(classified.message, { status: 401, statusText: 'Unauthorized' });
+    }
+
+    throw new Response(classified.message, { status: 500, statusText: 'Internal Server Error' });
   }
+}
+
+interface ProviderError {
+  code: string;
+  message: string;
+  [key: string]: string;
+}
+
+function classifyProviderError(error: any): ProviderError {
+  const msg: string = (error?.message ?? error?.toString() ?? '').toLowerCase();
+  const status: number = error?.status ?? error?.statusCode ?? 0;
+
+  if (
+    msg.includes('credit') ||
+    msg.includes('billing') ||
+    msg.includes('insufficient_quota') ||
+    msg.includes('exceeded your current quota') ||
+    status === 402
+  ) {
+    return {
+      code: 'credits_exhausted',
+      message: 'You have run out of API credits. Please top up your account and try again.',
+    };
+  }
+
+  if (msg.includes('api key') || msg.includes('api_key') || msg.includes('authentication') || status === 401) {
+    return { code: 'invalid_api_key', message: 'Invalid or missing API key. Please check your settings.' };
+  }
+
+  if (msg.includes('rate limit') || msg.includes('rate_limit') || status === 429) {
+    return { code: 'rate_limited', message: 'Rate limit reached. Please wait a moment and try again.' };
+  }
+
+  if (msg.includes('overloaded') || status === 529 || status === 503) {
+    return { code: 'overloaded', message: 'The AI provider is currently overloaded. Please try again shortly.' };
+  }
+
+  return { code: 'unknown', message: error?.message ?? 'An unexpected error occurred. Please try again.' };
 }

@@ -1,5 +1,6 @@
 ﻿import { type ActionFunctionArgs, json } from '@remix-run/cloudflare';
 import type { NetlifySiteInfo } from '~/types/netlify';
+import { updateProjectUrl } from '~/lib/project-tracker.server';
 
 interface DeployRequestBody {
   siteId?: string;
@@ -197,12 +198,18 @@ export async function action({ request }: ActionFunctionArgs) {
       if (status.state === 'ready') {
         // Only return after files are uploaded
         if (Object.keys(files).length === 0 || status.summary?.status === 'ready') {
+          const deployUrl = status.ssl_url || status.url;
+
+          if (chatId && deployUrl) {
+            updateProjectUrl(chatId, 'netlifyUrl', deployUrl).catch(console.error);
+          }
+
           return json({
             success: true,
             deploy: {
               id: status.id,
               state: status.state,
-              url: status.ssl_url || status.url,
+              url: deployUrl,
             },
             site: siteInfo,
           });

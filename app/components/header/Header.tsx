@@ -41,16 +41,34 @@ export function Header() {
       {!chat.started && <div className="flex-1" />}
       <ClientOnly>
         {() => (
-          <Form method="post" action="/api/auth/logout">
-            <button
-              type="submit"
-              title="Sign out"
-              className="ml-3 flex items-center gap-1.5 px-3 py-1.5 text-xs text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary border border-bolt-elements-borderColor hover:border-bolt-elements-borderColorActive rounded-lg transition-colors"
+          <div className="flex items-center gap-2 ml-3">
+            <a
+              href="/skills"
+              title="Skills"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary border border-bolt-elements-borderColor hover:border-bolt-elements-borderColorActive rounded-lg transition-colors"
             >
-              <div className="i-ph:sign-out text-base" />
-              <span>Sign out</span>
-            </button>
-          </Form>
+              <div className="i-ph:puzzle-piece text-base" />
+              <span>Skills</span>
+            </a>
+            <a
+              href="/projects"
+              title="My Projects"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary border border-bolt-elements-borderColor hover:border-bolt-elements-borderColorActive rounded-lg transition-colors"
+            >
+              <div className="i-ph:chat-circle text-base" />
+              <span>Chats</span>
+            </a>
+            <Form method="post" action="/api/auth/logout">
+              <button
+                type="submit"
+                title="Sign out"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-bolt-elements-textSecondary hover:text-bolt-elements-textPrimary border border-bolt-elements-borderColor hover:border-bolt-elements-borderColorActive rounded-lg transition-colors"
+              >
+                <div className="i-ph:sign-out text-base" />
+                <span>Sign out</span>
+              </button>
+            </Form>
+          </div>
         )}
       </ClientOnly>
     </header>

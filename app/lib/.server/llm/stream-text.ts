@@ -8,6 +8,9 @@ import { allowedHTMLElements } from '~/utils/markdown';
 import { LLMManager } from '~/lib/modules/llm/manager';
 import { createScopedLogger } from '~/utils/logger';
 import { createFilesContext, extractPropertiesFromMessage } from './utils';
+import { getActiveCustomPromptSkills, getDisabledBuiltinSkillNames } from '~/lib/skills.server';
+import { promptSkills, selectSkills, type PromptSkill } from '~/lib/common/prompts/skills';
+import { selectSkillsViaLLM } from './select-skills';
 
 export type Messages = Message[];
 
@@ -36,6 +39,9 @@ export async function streamText(props: {
   contextFiles?: FileMap;
   summary?: string;
   messageSliceId?: number;
+
+  /** Called with the names of the skills loaded into the system prompt for this request */
+  onSkillsLoaded?: (skills: string[]) => void;
 }) {
   const {
     messages,
@@ -109,11 +115,84 @@ export async function streamText(props: {
 
   const dynamicMaxTokens = modelDetails && modelDetails.maxTokenAllowed ? modelDetails.maxTokenAllowed : MAX_TOKENS;
 
+  // Admin-imported skills + disabled built-ins from MongoDB (cached 60s) — never block the chat on a DB failure
+  let customSkills: PromptSkill[] = [];
+  let disabledSkills: string[] = [];
+
+  try {
+    [customSkills, disabledSkills] = await Promise.all([getActiveCustomPromptSkills(), getDisabledBuiltinSkillNames()]);
+  } catch (error) {
+    logger.error('Failed to load skill configuration', error);
+  }
+
+  // Plain text of user messages — drives which prompt skills get loaded
+  const userMessageTexts = processedMessages
+    .filter((message) => message.role === 'user')
+    .map((message) =>
+      typeof message.content === 'string'
+        ? message.content
+        : (message.content as any[])
+            .filter((part) => part?.type === 'text')
+            .map((part) => part.text)
+            .join('\n'),
+    );
+
+  const modelInstance = provider.getModelInstance({
+    model: modelDetails.name,
+    serverEnv,
+    apiKeys,
+    providerSettings,
+  });
+
+  /*
+   * Skill router: a tiny LLM call decides which skills the response needs based on
+   * the catalog descriptions — the model picks for itself, like Claude skills.
+   * On failure it returns undefined and selection falls back to regex triggers.
+   */
+  const skillContext = {
+    cwd: WORK_DIR,
+    supabase: {
+      isConnected: options?.supabaseConnection?.isConnected || false,
+      hasSelectedProject: options?.supabaseConnection?.hasSelectedProject || false,
+      credentials: options?.supabaseConnection?.credentials || undefined,
+    },
+  };
+
+  const llmSelectedSkills = await selectSkillsViaLLM({
+    model: modelInstance,
+    userMessages: userMessageTexts,
+    catalog: [...promptSkills, ...customSkills]
+      .filter((s) => !disabledSkills.includes(s.name))
+      .map((s) => ({
+        name: s.name,
+        description:
+          s.name === 'database-supabase' && skillContext.supabase.isConnected
+            ? `${s.description} NOTE: Supabase IS connected in this chat — select this whenever the request involves data, accounts, auth, or persistence.`
+            : s.description,
+      })),
+  });
+
+  // Mirror of the selection done inside getSystemPrompt — reported to the UI
+  const loadedSkillNames = selectSkills(
+    userMessageTexts,
+    skillContext,
+    customSkills,
+    llmSelectedSkills,
+    disabledSkills,
+  ).map((s) => s.name);
+
+  logger.info(`Skills loaded: [${loadedSkillNames.join(', ')}]`);
+  props.onSkillsLoaded?.(loadedSkillNames);
+
   let systemPrompt =
     PromptLibrary.getPropmtFromLibrary(promptId || 'default', {
       cwd: WORK_DIR,
       allowedHtmlElements: allowedHTMLElements,
       modificationTagName: MODIFICATIONS_TAG_NAME,
+      userMessages: userMessageTexts,
+      customSkills,
+      llmSelectedSkills,
+      disabledSkills,
       supabase: {
         isConnected: options?.supabaseConnection?.isConnected || false,
         hasSelectedProject: options?.supabaseConnection?.hasSelectedProject || false,
@@ -179,16 +258,12 @@ ${lockedFilesListString}
   }
 
   logger.info(`Sending llm call to ${provider.name} with model ${modelDetails.name}`);
+  logger.info(`System prompt: ${systemPrompt.length} chars (~${Math.round(systemPrompt.length / 4)} tokens)`);
 
   // console.log(systemPrompt, processedMessages);
 
   return await _streamText({
-    model: provider.getModelInstance({
-      model: modelDetails.name,
-      serverEnv,
-      apiKeys,
-      providerSettings,
-    }),
+    model: modelInstance,
     system: systemPrompt,
     maxTokens: dynamicMaxTokens,
     messages: convertToCoreMessages(processedMessages as any),

@@ -59,7 +59,14 @@ export const AssistantMessage = memo(({ content, annotations, messageId, onRewin
     completionTokens: number;
     promptTokens: number;
     totalTokens: number;
+    promptCost?: number;
+    completionCost?: number;
+    totalCost?: number;
   } = filteredAnnotations.find((annotation) => annotation.type === 'usage')?.value;
+
+  const skillsUsed: string[] | undefined = filteredAnnotations.find(
+    (annotation) => annotation.type === 'skillsUsed',
+  )?.skills;
 
   return (
     <div className="overflow-hidden w-full">
@@ -105,11 +112,31 @@ export const AssistantMessage = memo(({ content, annotations, messageId, onRewin
             </Popover>
           )}
           <div className="flex w-full items-center justify-between">
-            {usage && (
-              <div>
-                Tokens: {usage.totalTokens} (prompt: {usage.promptTokens}, completion: {usage.completionTokens})
-              </div>
-            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {usage && (
+                <div>
+                  Tokens: {usage.totalTokens} (prompt: {usage.promptTokens}, completion: {usage.completionTokens})
+                  {typeof usage.totalCost === 'number' && (
+                    <span className="text-bolt-elements-textTertiary"> · ${usage.totalCost.toFixed(4)}</span>
+                  )}
+                </div>
+              )}
+              {skillsUsed && skillsUsed.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <WithTooltip tooltip="Skills loaded for this response">
+                    <div className="i-ph:lightning text-purple-400" />
+                  </WithTooltip>
+                  {skillsUsed.map((skill) => (
+                    <span
+                      key={skill}
+                      className="px-1.5 py-0.5 rounded-md text-xs bg-purple-500/10 border border-purple-500/20 text-purple-400"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
             {(onRewind || onFork) && messageId && (
               <div className="flex gap-2 flex-col lg:flex-row ml-auto">
                 {onRewind && (

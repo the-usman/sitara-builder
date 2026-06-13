@@ -9,7 +9,7 @@ import { useAnimate } from 'framer-motion';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { cssTransition, toast, ToastContainer } from 'react-toastify';
 import { useMessageParser, usePromptEnhancer, useShortcuts } from '~/lib/hooks';
-import { description, useChatHistory } from '~/lib/persistence';
+import { description as descriptionAtom, useChatHistory, chatId } from '~/lib/persistence';
 import { chatStore } from '~/lib/stores/chat';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, PROMPT_COOKIE_KEY, PROVIDER_LIST } from '~/utils/constants';
@@ -39,7 +39,7 @@ export function Chat() {
   renderLogger.trace('Chat');
 
   const { ready, initialMessages, storeMessageHistory, importChat, exportChat } = useChatHistory();
-  const title = useStore(description);
+  const title = useStore(descriptionAtom);
   useEffect(() => {
     workbenchStore.setReloadedMessages(initialMessages.map((m) => m.id));
   }, [initialMessages]);
@@ -118,11 +118,22 @@ export const ChatImpl = memo(
     useShortcuts();
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const currentChatId = useStore(chatId); // reactive — updates when IndexedDB ID is assigned
     const [chatStarted, setChatStarted] = useState(initialMessages.length > 0);
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
     const [imageDataList, setImageDataList] = useState<string[]>([]);
     const [searchParams, setSearchParams] = useSearchParams();
     const [fakeLoading, setFakeLoading] = useState(false);
+    const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+    const [chatNameInput, setChatNameInput] = useState('');
+    const [showNameModal, setShowNameModal] = useState(false);
+    const [clients, setClients] = useState<{ _id: string; clientName: string; productName: string }[]>([]);
+    const [selectedClientId, setSelectedClientId] = useState('');
+    const [clientsLoading, setClientsLoading] = useState(false);
+    // Ref stores the confirmed client synchronously — React state batching makes useChat body stale
+    const selectedClientRef = useRef<{ _id: string; clientName: string; productName: string } | null>(null);
+    // Guard: prevents modal re-triggering when description prop hasn't re-rendered yet
+    const chatConfiguredRef = useRef(false);
     const files = useStore(workbenchStore.files);
     const actionAlert = useStore(workbenchStore.alert);
     const deployAlert = useStore(workbenchStore.deployAlert);
@@ -168,6 +179,9 @@ export const ChatImpl = memo(
         files,
         promptId,
         contextOptimization: contextOptimizationEnabled,
+        chatId: currentChatId,
+        chatDescription: description,
+        selectedClient: clients.find((c) => c._id === selectedClientId) ?? null,
         supabase: {
           isConnected: supabaseConn.isConnected,
           hasSelectedProject: !!selectedProject,
@@ -185,9 +199,23 @@ export const ChatImpl = memo(
           action: 'request',
           error: e.message,
         });
-        toast.error(
-          'There was an error processing your request: ' + (e.message ? e.message : 'No details were returned'),
-        );
+
+        const msg = e.message ?? '';
+        const status = (e as any).status ?? 0;
+
+        if (status === 402 || msg.toLowerCase().includes('credit') || msg.toLowerCase().includes('quota')) {
+          toast.error('You have run out of API credits. Please top up your account and try again.', {
+            autoClose: false,
+          });
+        } else if (status === 401 || msg.toLowerCase().includes('api key')) {
+          toast.error('Invalid or missing API key. Please check your settings.', { autoClose: false });
+        } else if (status === 429 || msg.toLowerCase().includes('rate limit')) {
+          toast.warning('Rate limit reached. Please wait a moment and try again.');
+        } else if (status === 529 || status === 503 || msg.toLowerCase().includes('overloaded')) {
+          toast.warning('The AI provider is currently overloaded. Please try again shortly.');
+        } else {
+          toast.error('There was an error processing your request: ' + (msg || 'No details were returned'));
+        }
       },
       onFinish: (message, response) => {
         const usage = response.usage;
@@ -210,6 +238,28 @@ export const ChatImpl = memo(
       initialMessages,
       initialInput: Cookies.get(PROMPT_COOKIE_KEY) || '',
     });
+    useEffect(() => {
+      if (!chatData) return;
+
+      for (const item of chatData as any[]) {
+        if (item?.type === 'error' && item?.error) {
+          const { code, message } = item.error as { code: string; message: string };
+
+          if (code === 'credits_exhausted') {
+            toast.error(message, { autoClose: false, toastId: 'credits_exhausted' });
+          } else if (code === 'invalid_api_key') {
+            toast.error(message, { autoClose: false, toastId: 'invalid_api_key' });
+          } else if (code === 'rate_limited') {
+            toast.warning(message, { toastId: 'rate_limited' });
+          } else if (code === 'overloaded') {
+            toast.warning(message, { toastId: 'overloaded' });
+          } else {
+            toast.error(message || 'An unexpected error occurred.');
+          }
+        }
+      }
+    }, [chatData]);
+
     useEffect(() => {
       const prompt = searchParams.get('prompt');
 
@@ -310,6 +360,21 @@ export const ChatImpl = memo(
         return;
       }
 
+      // On a brand-new chat, require client selection + name before proceeding
+      if (!chatStarted && !description && !chatConfiguredRef.current) {
+        setPendingMessage(messageContent);
+        setChatNameInput('');
+        setSelectedClientId('');
+        setShowNameModal(true);
+        setClientsLoading(true);
+        fetch('/api/clients')
+          .then((r) => r.json())
+          .then((data: any) => setClients(data.clients || []))
+          .catch(() => setClients([]))
+          .finally(() => setClientsLoading(false));
+        return;
+      }
+
       // If no locked items, proceed normally with the original message
       const finalMessageContent = messageContent;
 
@@ -370,7 +435,7 @@ export const ChatImpl = memo(
                   annotations: ['hidden'],
                 },
               ]);
-              reload();
+              reload({ body: { selectedClient: selectedClientRef.current } });
               setInput('');
               Cookies.remove(PROMPT_COOKIE_KEY);
 
@@ -388,9 +453,8 @@ export const ChatImpl = memo(
         }
 
         // If autoSelectTemplate is disabled or template selection failed, proceed with normal message
-        setMessages([
+        append(
           {
-            id: `${new Date().getTime()}`,
             role: 'user',
             content: [
               {
@@ -403,8 +467,8 @@ export const ChatImpl = memo(
               })),
             ] as any,
           },
-        ]);
-        reload();
+          { body: { selectedClient: selectedClientRef.current } },
+        );
         setFakeLoading(false);
         setInput('');
         Cookies.remove(PROMPT_COOKIE_KEY);
@@ -429,35 +493,41 @@ export const ChatImpl = memo(
 
       if (modifiedFiles !== undefined) {
         const userUpdateArtifact = filesToArtifacts(modifiedFiles, `${Date.now()}`);
-        append({
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}`,
-            },
-            ...imageDataList.map((imageData) => ({
-              type: 'image',
-              image: imageData,
-            })),
-          ] as any,
-        });
+        append(
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}`,
+              },
+              ...imageDataList.map((imageData) => ({
+                type: 'image',
+                image: imageData,
+              })),
+            ] as any,
+          },
+          { body: { selectedClient: selectedClientRef.current } },
+        );
 
         workbenchStore.resetAllFileModifications();
       } else {
-        append({
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
-            },
-            ...imageDataList.map((imageData) => ({
-              type: 'image',
-              image: imageData,
-            })),
-          ] as any,
-        });
+        append(
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
+              },
+              ...imageDataList.map((imageData) => ({
+                type: 'image',
+                image: imageData,
+              })),
+            ] as any,
+          },
+          { body: { selectedClient: selectedClientRef.current } },
+        );
       }
 
       setInput('');
@@ -509,8 +579,105 @@ export const ChatImpl = memo(
       Cookies.set('selectedProvider', newProvider.name, { expires: 30 });
     };
 
+    const confirmChatName = () => {
+      const name = chatNameInput.trim();
+
+      if (!name || !selectedClientId) {
+        return;
+      }
+
+      // Set refs synchronously — useChat body ref is stale until next render
+      selectedClientRef.current = clients.find((c) => c._id === selectedClientId) ?? null;
+      chatConfiguredRef.current = true;
+
+      descriptionAtom.set(name);
+      setShowNameModal(false);
+
+      if (pendingMessage !== null) {
+        const msg = pendingMessage;
+        setPendingMessage(null);
+        sendMessage({ nativeEvent: {} } as any, msg);
+      }
+    };
+
     return (
-      <BaseChat
+      <>
+        {/* New chat modal — client selection + name, required before first message */}
+        {showNameModal && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="bg-[#111118] border border-white/[0.1] rounded-2xl p-7 w-full max-w-md shadow-2xl mx-4">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shrink-0">
+                  <div className="i-ph:chat-circle-text text-white text-lg" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-white leading-tight">New Chat</h2>
+                  <p className="text-xs text-gray-500">Select a client and name this chat to continue</p>
+                </div>
+              </div>
+
+              {/* Client dropdown */}
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Client</label>
+                {clientsLoading ? (
+                  <div className="w-full px-4 py-3 bg-white/[0.05] border border-white/[0.1] rounded-xl text-gray-500 text-sm">
+                    Loading clients…
+                  </div>
+                ) : (
+                  <select
+                    autoFocus
+                    value={selectedClientId}
+                    onChange={(e) => setSelectedClientId(e.target.value)}
+                    className="w-full px-4 py-3 bg-white/[0.05] border border-white/[0.1] rounded-xl text-white text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-colors appearance-none cursor-pointer"
+                    style={{ backgroundImage: 'none' }}
+                  >
+                    <option value="" disabled className="bg-[#111118] text-gray-400">
+                      — Select a client —
+                    </option>
+                    {clients.map((c) => (
+                      <option key={c._id} value={c._id} className="bg-[#111118] text-white">
+                        {c.clientName} — {c.productName}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Chat name */}
+              <div className="mb-6">
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Chat name</label>
+                <input
+                  type="text"
+                  value={chatNameInput}
+                  onChange={(e) => setChatNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') confirmChatName();
+                    if (e.key === 'Escape') setShowNameModal(false);
+                  }}
+                  placeholder="e.g. Landing page redesign"
+                  className="w-full px-4 py-3 bg-white/[0.05] border border-white/[0.1] rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-colors"
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={() => { setShowNameModal(false); setPendingMessage(null); }}
+                  className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmChatName}
+                  disabled={!selectedClientId || !chatNameInput.trim()}
+                  className="px-5 py-2 text-sm font-medium bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl transition-all"
+                >
+                  Start Building
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <BaseChat
         ref={animationScope}
         textareaRef={textareaRef}
         input={input}
@@ -570,6 +737,7 @@ export const ChatImpl = memo(
         clearDeployAlert={() => workbenchStore.clearDeployAlert()}
         data={chatData}
       />
+      </>
     );
   },
 );

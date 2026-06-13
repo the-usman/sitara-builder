@@ -1,5 +1,6 @@
 ﻿import { type ActionFunctionArgs, type LoaderFunctionArgs, json } from '@remix-run/cloudflare';
 import type { VercelProjectInfo } from '~/types/vercel';
+import { updateProjectUrl } from '~/lib/project-tracker.server';
 
 // Add loader function to handle GET requests
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -232,14 +233,18 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ error: 'Deployment timed out' }, { status: 500 });
     }
 
+    const finalUrl = projectInfo.url || deploymentUrl;
+
+    if (chatId && finalUrl) {
+      updateProjectUrl(chatId, 'vercelUrl', finalUrl).catch(console.error);
+    }
+
     return json({
       success: true,
       deploy: {
         id: deployData.id,
         state: deploymentState,
-
-        // Return public domain as deploy URL and private domain as fallback.
-        url: projectInfo.url || deploymentUrl,
+        url: finalUrl,
       },
       project: projectInfo,
     });

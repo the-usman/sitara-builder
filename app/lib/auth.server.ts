@@ -1,7 +1,13 @@
+import dns from 'dns';
 import { MongoClient } from 'mongodb';
 import { SignJWT, jwtVerify } from 'jose';
 import { redirect } from '@remix-run/cloudflare';
 import { randomBytes, scrypt, timingSafeEqual } from 'crypto';
+
+// Cloudflare Workers handles SRV natively. Only fix DNS in local Node.js dev.
+if (typeof navigator === 'undefined' || navigator.userAgent !== 'Cloudflare-Workers') {
+  try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch {}
+}
 
 function scryptAsync(password: string | Buffer, salt: Buffer, keylen: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {

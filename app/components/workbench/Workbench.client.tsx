@@ -17,6 +17,7 @@ import { IconButton } from '~/components/ui/IconButton';
 import { PanelHeaderButton } from '~/components/ui/PanelHeaderButton';
 import { Slider, type SliderOptions } from '~/components/ui/Slider';
 import { workbenchStore, type WorkbenchViewType } from '~/lib/stores/workbench';
+import { chatId } from '~/lib/persistence';
 import { classNames } from '~/utils/classNames';
 import { cubicEasingFn } from '~/utils/easings';
 import { renderLogger } from '~/utils/logger';
@@ -509,6 +510,16 @@ export const Workbench = memo(
                     ...(metadata || {}),
                     gitUrl: repoUrl,
                   });
+                }
+
+                const currentChatId = chatId.get();
+
+                if (currentChatId && repoUrl) {
+                  fetch('/api/project-update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chatId: currentChatId, field: 'githubUrl', url: repoUrl }),
+                  }).catch(console.error);
                 }
 
                 return repoUrl;

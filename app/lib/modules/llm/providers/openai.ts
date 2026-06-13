@@ -83,6 +83,9 @@ export default class OpenAIProvider extends BaseProvider {
 
     const openai = createOpenAI({
       apiKey,
+
+      // 'strict' sends stream_options.include_usage so streaming responses report token usage
+      compatibility: 'strict',
     });
 
     return openai(model);
