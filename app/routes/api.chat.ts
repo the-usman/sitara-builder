@@ -14,6 +14,7 @@ import { extractPropertiesFromMessage } from '~/lib/.server/llm/utils';
 import { getAuthToken, verifyJwt } from '~/lib/auth.server';
 import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
 import { computeCost } from '~/lib/.server/llm/model-pricing';
+import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
 
 export async function action(args: ActionFunctionArgs) {
   return chatAction(args);
@@ -220,10 +221,20 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
             if (finishReason !== 'length') {
               const lastUserMsg = messages.filter((x) => x.role === 'user').slice(-1)[0];
               const { model: usageModel, provider: usageProvider } = extractPropertiesFromMessage(lastUserMsg);
+              // OpenRouter/Together expose live per-token pricing; first-party
+              // providers don't, so this returns undefined and we use the static table.
+              const liveRate = await getLiveModelRate(
+                usageProvider,
+                usageModel,
+                context.cloudflare?.env as unknown as Record<string, string>,
+                apiKeys,
+              );
               const cost = computeCost(
+                usageProvider,
                 usageModel,
                 cumulativeUsage.promptTokens,
                 cumulativeUsage.completionTokens,
+                liveRate,
               );
 
               dataStream.writeMessageAnnotation({

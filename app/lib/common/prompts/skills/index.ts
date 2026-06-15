@@ -1,6 +1,7 @@
 import type { PromptSkill, SkillContext } from './types';
 import { uiUxDesignSkill } from './ui-ux-design';
 import { threejs3dSkill } from './threejs-3d';
+import { spline3dSkill } from './spline-3d';
 import { internetAssetsSkill } from './internet-assets';
 import { databaseSupabaseSkill } from './database-supabase';
 import { fullstackSkill } from './fullstack';
@@ -16,6 +17,7 @@ export type { PromptSkill, SkillContext } from './types';
 export const promptSkills: PromptSkill[] = [
   uiUxDesignSkill,
   threejs3dSkill,
+  spline3dSkill,
   internetAssetsSkill,
   databaseSupabaseSkill,
   fullstackSkill,
