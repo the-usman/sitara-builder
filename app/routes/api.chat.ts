@@ -275,34 +275,42 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               } else if (!selectedClient) {
                 console.error('[chat-tracker] SKIP: selectedClient is null/undefined');
               } else {
-                const modelKey = `${usageModel}:${usageProvider}`;
+                // MongoDB treats dots in dot-notation paths as nested keys, so a model
+                // name like "gpt-4.1" would scatter usage across bogus sub-documents.
+                const modelKey = `${usageModel}:${usageProvider}`.replace(/\./g, '_');
                 console.log(
                   `[chat-tracker] saving — trackingId: ${trackingId}, client: ${selectedClient.clientName}, model: ${modelKey}, cost: $${cost.totalCost.toFixed(4)}`,
                 );
-                upsertProject(
-                  trackingId,
-                  chatDescription || trackingId,
-                  { userId: authUser.userId, email: authUser.email, name: authUser.name, role: authUser.role },
-                  selectedClient,
-                  modelKey,
-                  {
-                    model: usageModel,
-                    provider: usageProvider,
-                    promptTokens: cumulativeUsage.promptTokens,
-                    completionTokens: cumulativeUsage.completionTokens,
-                    totalTokens: cumulativeUsage.totalTokens,
-                    promptCost: cost.promptCost,
-                    completionCost: cost.completionCost,
-                    cost: cost.totalCost,
-                  },
-                  chatId,
-                )
-                  .then(() => {
-                    console.log('[chat-tracker] upsert SUCCESS for', trackingId);
-                  })
-                  .catch((err) => {
-                    console.error('[chat-tracker] upsert FAILED:', String(err));
-                  });
+
+                /*
+                 * IMPORTANT: await the write. This is a streaming response — once onFinish
+                 * returns and the stream closes, the request context is torn down and any
+                 * in-flight (un-awaited) DB write is cancelled before it commits, which is
+                 * why rows never appeared. onFinish is async, so awaiting here is safe.
+                 */
+                try {
+                  await upsertProject(
+                    trackingId,
+                    chatDescription || trackingId,
+                    { userId: authUser.userId, email: authUser.email, name: authUser.name, role: authUser.role },
+                    selectedClient,
+                    modelKey,
+                    {
+                      model: usageModel,
+                      provider: usageProvider,
+                      promptTokens: cumulativeUsage.promptTokens,
+                      completionTokens: cumulativeUsage.completionTokens,
+                      totalTokens: cumulativeUsage.totalTokens,
+                      promptCost: cost.promptCost,
+                      completionCost: cost.completionCost,
+                      cost: cost.totalCost,
+                    },
+                    chatId,
+                  );
+                  console.log('[chat-tracker] upsert SUCCESS for', trackingId);
+                } catch (err) {
+                  console.error('[chat-tracker] upsert FAILED:', String(err));
+                }
               }
 
               return;
