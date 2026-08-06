@@ -63,3 +63,13 @@ services:
 
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+
+    # Dokploy's Traefik proxy reaches containers over this network. Without joining it the
+    # container runs and reports healthy, but the domain returns 502/404 because Traefik
+    # has no route to it. Point the domain at service "app", port 5173.
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
