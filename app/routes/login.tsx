@@ -31,8 +31,14 @@ export async function action({ request, context }: ActionFunctionArgs) {
 
   let user: Awaited<ReturnType<typeof findUserByEmail>>;
   try {
-    user = await findUserByEmail(email);
-  } catch {
+    // `env` must be forwarded: under Workers there is no populated process.env, so
+    // without it the Mongo URI resolves to undefined and this throws immediately.
+    user = await findUserByEmail(email, env);
+  } catch (error) {
+    // Never swallow this silently — a bare catch here hides misconfiguration behind a
+    // generic "database" message and makes the real cause invisible in the logs.
+    console.error('[login] findUserByEmail failed:', error);
+
     return json({ error: 'Unable to connect to database. Please try again.' }, { status: 503 });
   }
 
@@ -146,11 +152,7 @@ export default function LoginPage() {
                 <span className="inline-flex items-center justify-center gap-2">
                   <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                   Signing in…
                 </span>
