@@ -55,6 +55,11 @@ ENV WRANGLER_SEND_METRICS=false \
 RUN mkdir -p /root/.config/.wrangler && \
     echo '{"enabled":false}' > /root/.config/.wrangler/metrics.json
 
+# The Vite build is memory-hungry (large vendor chunks plus every Shiki grammar). The
+# default V8 heap is too small on a modest VPS and the build dies with SIGABRT (exit 134).
+# This raises the ceiling — the host still needs the RAM (or swap) to back it.
+ENV NODE_OPTIONS=--max-old-space-size=4096
+
 RUN pnpm run build
 
 # bindings.sh is invoked as ./bindings.sh by `dockerstart`. A checkout from Windows loses
