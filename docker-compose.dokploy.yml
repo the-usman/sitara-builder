@@ -1,0 +1,65 @@
+# Dokploy deployment.
+#
+# In Dokploy: create an application → Compose type → point it at this file, then set the
+# variables below under the app's "Environment" tab. They are injected at runtime and are
+# never baked into the image (.dockerignore excludes .env and *.local).
+#
+# Required: MONGODB_URI, JWT_SECRET. Everything else is optional.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: bolt-ai-production
+    restart: unless-stopped
+    ports:
+      - '${PORT:-5173}:5173'
+    environment:
+      NODE_ENV: production
+      RUNNING_IN_DOCKER: 'true'
+      PORT: '5173'
+
+      # --- Required -------------------------------------------------------------
+      # The server throws on any request if these are unset. No defaults on purpose:
+      # a fallback secret is worse than a loud failure.
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI must be set in the Dokploy environment}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in the Dokploy environment}
+
+      # --- LLM providers (set only the ones you use) ----------------------------
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:-}
+      GOOGLE_GENERATIVE_AI_API_KEY: ${GOOGLE_GENERATIVE_AI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      TOGETHER_API_BASE_URL: ${TOGETHER_API_BASE_URL:-}
+      OPENAI_LIKE_API_KEY: ${OPENAI_LIKE_API_KEY:-}
+      OPENAI_LIKE_API_BASE_URL: ${OPENAI_LIKE_API_BASE_URL:-}
+      OLLAMA_API_BASE_URL: ${OLLAMA_API_BASE_URL:-}
+      LMSTUDIO_API_BASE_URL: ${LMSTUDIO_API_BASE_URL:-}
+      AWS_BEDROCK_CONFIG: ${AWS_BEDROCK_CONFIG:-}
+
+      # --- Misc -----------------------------------------------------------------
+      VITE_LOG_LEVEL: ${VITE_LOG_LEVEL:-info}
+      DEFAULT_NUM_CTX: ${DEFAULT_NUM_CTX:-32768}
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - '-e'
+        - "fetch('http://127.0.0.1:5173/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+
+      # Give the container room to boot before failures count against it.
+      start_period: 60s
+      retries: 3
+
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'

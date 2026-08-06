@@ -1,19 +1,13 @@
 import { json, type LoaderFunctionArgs } from '@remix-run/cloudflare';
-import { MongoClient } from 'mongodb';
 import { requireAuth } from '~/lib/auth.server';
-
-const MONGODB_URI =
-  process.env.MONGODB_URI || 'mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/';
+import { withMongo } from '~/lib/mongo.server';
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
-  await requireAuth(request, (context as any).cloudflare?.env);
+  const env = (context as any).cloudflare?.env;
+  await requireAuth(request, env);
 
-  const client = new MongoClient(MONGODB_URI);
-
-  try {
-    await client.connect();
-    const docs = await client
-      .db('project_db_client')
+  return withMongo(env, async (db) => {
+    const docs = await db
       .collection('clients')
       .find({}, { projection: { _id: 1, clientName: 1, productName: 1 } })
       .sort({ clientName: 1 })
@@ -26,7 +20,5 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
         productName: d.productName as string,
       })),
     });
-  } finally {
-    await client.close();
-  }
+  });
 }

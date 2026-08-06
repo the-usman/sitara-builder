@@ -62,6 +62,22 @@ export async function getAll(db: IDBDatabase): Promise<ChatHistoryItem[]> {
   });
 }
 
+/**
+ * Finds a locally stored chat by its tracking ID (the first user message ID).
+ *
+ * The projects list links by tracking ID because `clientChatId` is frequently never
+ * recorded — on a new chat the IndexedDB row does not exist until after the first
+ * response, so the first upsert has no ID to send. Tracking ID is always present.
+ */
+export async function getMessagesByTrackingId(
+  db: IDBDatabase,
+  trackingId: string,
+): Promise<ChatHistoryItem | undefined> {
+  const chats = await getAll(db);
+
+  return chats.find((chat) => chat.messages?.filter((m) => m.role === 'user')[0]?.id === trackingId);
+}
+
 export async function setMessages(
   db: IDBDatabase,
   id: string,

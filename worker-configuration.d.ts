@@ -1,5 +1,14 @@
+/*
+ * Careful — `bindings.sh` scrapes the names below to build `wrangler --binding` flags when no
+ * .env.local is present (the Docker/Dokploy path). A variable missing here is never
+ * forwarded into the worker, so anything the server code requires MUST be listed.
+ */
 interface Env {
   RUNNING_IN_DOCKER: Settings;
+
+  // Required by the server — requests throw without these.
+  MONGODB_URI: string;
+  JWT_SECRET: string;
   DEFAULT_NUM_CTX: Settings;
   ANTHROPIC_API_KEY: string;
   OPENAI_API_KEY: string;

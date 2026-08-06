@@ -1,17 +1,8 @@
-import dns from 'dns';
 import { MongoClient, type Collection } from 'mongodb';
 import JSZip from 'jszip';
 import type { PromptSkill } from '~/lib/common/prompts/skills';
+import { DB_NAME, getMongoUri, type ServerEnv } from '~/lib/mongo.server';
 
-// Cloudflare Workers handles SRV natively. Only fix DNS in local Node.js dev.
-if (typeof navigator === 'undefined' || navigator.userAgent !== 'Cloudflare-Workers') {
-  try {
-    dns.setServers(['8.8.8.8', '1.1.1.1']);
-  } catch {}
-}
-
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/';
-const DB_NAME = 'project_db_client';
 const COLLECTION = 'custom_skills';
 
 // Keep imported skill bodies bounded so a single skill can't blow up the prompt
@@ -34,8 +25,10 @@ export interface CustomSkillDoc {
   updatedAt: Date;
 }
 
-async function getCollection(): Promise<{ collection: Collection<CustomSkillDoc>; client: MongoClient }> {
-  const client = new MongoClient(MONGODB_URI);
+async function getCollection(
+  env?: ServerEnv,
+): Promise<{ collection: Collection<CustomSkillDoc>; client: MongoClient }> {
+  const client = new MongoClient(getMongoUri(env));
   await client.connect();
 
   return { collection: client.db(DB_NAME).collection<CustomSkillDoc>(COLLECTION), client };
@@ -226,8 +219,9 @@ export async function saveCustomSkill(
   source: CustomSkillDoc['source'],
   createdBy: CustomSkillDoc['createdBy'],
   options?: { triggers?: string; alwaysLoad?: boolean },
+  env?: ServerEnv,
 ): Promise<CustomSkillDoc> {
-  const { collection, client } = await getCollection();
+  const { collection, client } = await getCollection(env);
 
   try {
     const now = new Date();
@@ -262,8 +256,10 @@ export async function saveCustomSkill(
   }
 }
 
-export async function listCustomSkills(): Promise<Array<Omit<CustomSkillDoc, 'body'> & { bodyChars: number }>> {
-  const { collection, client } = await getCollection();
+export async function listCustomSkills(
+  env?: ServerEnv,
+): Promise<Array<Omit<CustomSkillDoc, 'body'> & { bodyChars: number }>> {
+  const { collection, client } = await getCollection(env);
 
   try {
     const docs = await collection.find({}).sort({ name: 1 }).toArray();
@@ -274,8 +270,8 @@ export async function listCustomSkills(): Promise<Array<Omit<CustomSkillDoc, 'bo
   }
 }
 
-export async function setCustomSkillEnabled(name: string, enabled: boolean): Promise<void> {
-  const { collection, client } = await getCollection();
+export async function setCustomSkillEnabled(name: string, enabled: boolean, env?: ServerEnv): Promise<void> {
+  const { collection, client } = await getCollection(env);
 
   try {
     await collection.updateOne({ name }, { $set: { enabled, updatedAt: new Date() } });
@@ -285,8 +281,8 @@ export async function setCustomSkillEnabled(name: string, enabled: boolean): Pro
   }
 }
 
-export async function deleteCustomSkill(name: string): Promise<void> {
-  const { collection, client } = await getCollection();
+export async function deleteCustomSkill(name: string, env?: ServerEnv): Promise<void> {
+  const { collection, client } = await getCollection(env);
 
   try {
     await collection.deleteOne({ name });
@@ -315,12 +311,12 @@ export function invalidateSkillsCache() {
 const SETTINGS_COLLECTION = 'skill_settings';
 const BUILTIN_SETTINGS_ID = 'builtin_disabled';
 
-export async function getDisabledBuiltinSkillNames(): Promise<string[]> {
+export async function getDisabledBuiltinSkillNames(env?: ServerEnv): Promise<string[]> {
   if (disabledBuiltinsCache && Date.now() - disabledBuiltinsCache.loadedAt < CACHE_TTL_MS) {
     return disabledBuiltinsCache.names;
   }
 
-  const client = new MongoClient(MONGODB_URI);
+  const client = new MongoClient(getMongoUri(env));
 
   try {
     await client.connect();
@@ -338,8 +334,8 @@ export async function getDisabledBuiltinSkillNames(): Promise<string[]> {
   }
 }
 
-export async function setBuiltinSkillEnabled(name: string, enabled: boolean): Promise<void> {
-  const client = new MongoClient(MONGODB_URI);
+export async function setBuiltinSkillEnabled(name: string, enabled: boolean, env?: ServerEnv): Promise<void> {
+  const client = new MongoClient(getMongoUri(env));
 
   try {
     await client.connect();
@@ -376,12 +372,12 @@ function toPromptSkill(doc: CustomSkillDoc): PromptSkill {
   };
 }
 
-export async function getActiveCustomPromptSkills(): Promise<PromptSkill[]> {
+export async function getActiveCustomPromptSkills(env?: ServerEnv): Promise<PromptSkill[]> {
   if (skillsCache && Date.now() - skillsCache.loadedAt < CACHE_TTL_MS) {
     return skillsCache.skills;
   }
 
-  const { collection, client } = await getCollection();
+  const { collection, client } = await getCollection(env);
 
   try {
     const docs = await collection.find({ enabled: true }).toArray();

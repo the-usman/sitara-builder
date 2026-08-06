@@ -6,8 +6,12 @@ import { getDisabledBuiltinSkillNames, listCustomSkills } from '~/lib/skills.ser
 import { promptSkills } from '~/lib/common/prompts/skills';
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
-  const user = await requireAuth(request, (context as any).cloudflare?.env);
-  const [customSkills, disabledBuiltins] = await Promise.all([listCustomSkills(), getDisabledBuiltinSkillNames()]);
+  const env = (context as any).cloudflare?.env;
+  const user = await requireAuth(request, env);
+  const [customSkills, disabledBuiltins] = await Promise.all([
+    listCustomSkills(env),
+    getDisabledBuiltinSkillNames(env),
+  ]);
   const builtIn = promptSkills.map((s) => ({
     name: s.name,
     description: s.description,

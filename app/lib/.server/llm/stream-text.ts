@@ -120,7 +120,10 @@ export async function streamText(props: {
   let disabledSkills: string[] = [];
 
   try {
-    [customSkills, disabledSkills] = await Promise.all([getActiveCustomPromptSkills(), getDisabledBuiltinSkillNames()]);
+    [customSkills, disabledSkills] = await Promise.all([
+      getActiveCustomPromptSkills(serverEnv as any),
+      getDisabledBuiltinSkillNames(serverEnv as any),
+    ]);
   } catch (error) {
     logger.error('Failed to load skill configuration', error);
   }

@@ -13,7 +13,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { ClientOnly } from 'remix-utils/client-only';
 import { json, redirect } from '@remix-run/cloudflare';
-import { generateText, streamText as streamText$1, convertToCoreMessages, createDataStream, generateId as generateId$1 } from 'ai';
+import { experimental_wrapLanguageModel, generateText, streamText as streamText$1, convertToCoreMessages, createDataStream, generateId as generateId$1 } from 'ai';
 import process from 'vite-plugin-node-polyfills/shims/process';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
@@ -27,9 +27,9 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { defaultSchema } from 'rehype-sanitize';
 import ignore from 'ignore';
 import Buffer, { Buffer as Buffer$1 } from 'vite-plugin-node-polyfills/shims/buffer';
-import dns from 'dns';
-import { MongoClient } from 'mongodb';
+import { MongoClient, Binary } from 'mongodb';
 import JSZip from 'jszip';
+import dns from 'dns';
 import { jwtVerify, SignJWT } from 'jose';
 import { timingSafeEqual, scrypt } from 'crypto';
 import * as TooltipPrimitive from '@radix-ui/react-tooltip';
@@ -52,7 +52,7 @@ import { QRCode } from 'react-qrcode-logo';
 const tailwindReset = "/assets/tailwind-compat-Bwh-BmjE.css";
 
 const chalk = new Chalk({ level: 3 });
-let currentLevel = "info";
+let currentLevel = "debug" ;
 const logger$g = {
   trace: (...messages) => log("trace", void 0, messages),
   debug: (...messages) => log("debug", void 0, messages),
@@ -757,6 +757,30 @@ function getOpenAILikeModel(baseURL, apiKey, model) {
   return openai(model);
 }
 
+const MODELS_REJECTING_SAMPLING_PARAMS = [
+  /^claude-(?:opus|sonnet|haiku)-(?:[5-9]|\d{2,})\b/,
+  /^claude-opus-4-(?:[7-9]|\d{2,})\b/,
+  /^claude-(?:fable|mythos)-/
+];
+function rejectsSamplingParams(modelId) {
+  const normalizedId = modelId.toLowerCase().replace(/^anthropic\./, "");
+  return MODELS_REJECTING_SAMPLING_PARAMS.some((pattern) => pattern.test(normalizedId));
+}
+function withSupportedSamplingParams(model) {
+  if (!rejectsSamplingParams(model.modelId)) {
+    return model;
+  }
+  return experimental_wrapLanguageModel({
+    model,
+    middleware: {
+      transformParams: async ({ params }) => {
+        const { temperature: _temperature, topP: _topP, topK: _topK, ...supportedParams } = params;
+        return supportedParams;
+      }
+    }
+  });
+}
+
 class AnthropicProvider extends BaseProvider {
   name = "Anthropic";
   getApiKeyLink = "https://console.anthropic.com/settings/keys";
@@ -831,7 +855,7 @@ class AnthropicProvider extends BaseProvider {
     const anthropic = createAnthropic({
       apiKey
     });
-    return anthropic(model);
+    return withSupportedSamplingParams(anthropic(model));
   };
 }
 
@@ -2021,7 +2045,7 @@ class LLMManager {
   }
 }
 
-const __vite_import_meta_env__$1 = {"BASE_URL": "/", "DEV": false, "LMSTUDIO_API_BASE_URL": "", "MODE": "production", "OLLAMA_API_BASE_URL": "", "OPENAI_LIKE_API_BASE_URL": "", "PROD": true, "SSR": true, "TOGETHER_API_BASE_URL": "", "VITE_GITHUB_ACCESS_TOKEN": "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", "VITE_GITHUB_TOKEN_TYPE": "classic", "VITE_LOG_LEVEL": "", "VITE_NETLIFY_ACCESS_TOKEN": "nfp_Ct8Ptp7CmiZfB3Xv4JBtt6atyUVSCd9j3f25", "VITE_VERCEL_ACCESS_TOKEN": "vcp_3VlTOglFCKZkhLZ9UAGoeAR1RaeN4fbzLdnf5NA9CYP1F7wlyz2ZnYqX"};
+const __vite_import_meta_env__$1 = {"BASE_URL": "/", "DEV": false, "LMSTUDIO_API_BASE_URL": "", "MODE": "production", "OLLAMA_API_BASE_URL": "", "OPENAI_LIKE_API_BASE_URL": "", "PROD": true, "SSR": true, "TOGETHER_API_BASE_URL": "", "VITE_GITHUB_ACCESS_TOKEN": "", "VITE_GITHUB_TOKEN_TYPE": "classic", "VITE_LOG_LEVEL": "debug"};
 const WORK_DIR_NAME = "project";
 const WORK_DIR = `/home/${WORK_DIR_NAME}`;
 const MODIFICATIONS_TAG_NAME = "bolt_file_modifications";
@@ -5983,14 +6007,38 @@ if (typeof navigator === "undefined" || navigator.userAgent !== "Cloudflare-Work
   } catch {
   }
 }
-const MONGODB_URI$3 = process.env.MONGODB_URI || "mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/";
-const DB_NAME$2 = "project_db_client";
-const COLLECTION$2 = "custom_skills";
+const DB_NAME = "project_db_client";
+function fromProcessEnv(key) {
+  return typeof process !== "undefined" ? process.env?.[key] : void 0;
+}
+function requireServerSecret(key, env) {
+  const value = env?.[key] || fromProcessEnv(key);
+  if (!value) {
+    throw new Error(
+      `${key} is not configured. Set it in .env for local development, or as a Cloudflare Pages environment variable (Settings > Environment variables) for deployments.`
+    );
+  }
+  return value;
+}
+function getMongoUri(env) {
+  return requireServerSecret("MONGODB_URI", env);
+}
+async function withMongo(env, fn) {
+  const client = new MongoClient(getMongoUri(env));
+  try {
+    await client.connect();
+    return await fn(client.db(DB_NAME));
+  } finally {
+    await client.close();
+  }
+}
+
+const COLLECTION$3 = "custom_skills";
 const MAX_BODY_CHARS = 32e3;
-async function getCollection$1() {
-  const client = new MongoClient(MONGODB_URI$3);
+async function getCollection(env) {
+  const client = new MongoClient(getMongoUri(env));
   await client.connect();
-  return { collection: client.db(DB_NAME$2).collection(COLLECTION$2), client };
+  return { collection: client.db(DB_NAME).collection(COLLECTION$3), client };
 }
 function parseSkillMd(raw, fallbackName) {
   const text = raw.replace(/^﻿/, "").replace(/\r\n/g, "\n");
@@ -6087,8 +6135,8 @@ async function importSkillFromZip(base64, filename) {
   const md = await zip.files[entry].async("string");
   return parseSkillMd(md, filename?.replace(/\.zip$/i, ""));
 }
-async function saveCustomSkill(parsed, source, createdBy, options) {
-  const { collection, client } = await getCollection$1();
+async function saveCustomSkill(parsed, source, createdBy, options, env) {
+  const { collection, client } = await getCollection(env);
   try {
     const now = /* @__PURE__ */ new Date();
     const triggers = options?.triggers?.trim() || parsed.triggers;
@@ -6117,8 +6165,8 @@ async function saveCustomSkill(parsed, source, createdBy, options) {
     await client.close();
   }
 }
-async function listCustomSkills() {
-  const { collection, client } = await getCollection$1();
+async function listCustomSkills(env) {
+  const { collection, client } = await getCollection(env);
   try {
     const docs = await collection.find({}).sort({ name: 1 }).toArray();
     return docs.map(({ body, ...rest }) => ({ ...rest, bodyChars: body.length }));
@@ -6126,8 +6174,8 @@ async function listCustomSkills() {
     await client.close();
   }
 }
-async function setCustomSkillEnabled(name, enabled) {
-  const { collection, client } = await getCollection$1();
+async function setCustomSkillEnabled(name, enabled, env) {
+  const { collection, client } = await getCollection(env);
   try {
     await collection.updateOne({ name }, { $set: { enabled, updatedAt: /* @__PURE__ */ new Date() } });
     invalidateSkillsCache();
@@ -6135,8 +6183,8 @@ async function setCustomSkillEnabled(name, enabled) {
     await client.close();
   }
 }
-async function deleteCustomSkill(name) {
-  const { collection, client } = await getCollection$1();
+async function deleteCustomSkill(name, env) {
+  const { collection, client } = await getCollection(env);
   try {
     await collection.deleteOne({ name });
     invalidateSkillsCache();
@@ -6153,14 +6201,14 @@ function invalidateSkillsCache() {
 }
 const SETTINGS_COLLECTION = "skill_settings";
 const BUILTIN_SETTINGS_ID = "builtin_disabled";
-async function getDisabledBuiltinSkillNames() {
+async function getDisabledBuiltinSkillNames(env) {
   if (disabledBuiltinsCache && Date.now() - disabledBuiltinsCache.loadedAt < CACHE_TTL_MS$1) {
     return disabledBuiltinsCache.names;
   }
-  const client = new MongoClient(MONGODB_URI$3);
+  const client = new MongoClient(getMongoUri(env));
   try {
     await client.connect();
-    const doc = await client.db(DB_NAME$2).collection(SETTINGS_COLLECTION).findOne({ _id: BUILTIN_SETTINGS_ID });
+    const doc = await client.db(DB_NAME).collection(SETTINGS_COLLECTION).findOne({ _id: BUILTIN_SETTINGS_ID });
     const names = Array.isArray(doc?.names) ? doc.names : [];
     disabledBuiltinsCache = { names, loadedAt: Date.now() };
     return names;
@@ -6168,11 +6216,11 @@ async function getDisabledBuiltinSkillNames() {
     await client.close();
   }
 }
-async function setBuiltinSkillEnabled(name, enabled) {
-  const client = new MongoClient(MONGODB_URI$3);
+async function setBuiltinSkillEnabled(name, enabled, env) {
+  const client = new MongoClient(getMongoUri(env));
   try {
     await client.connect();
-    await client.db(DB_NAME$2).collection(SETTINGS_COLLECTION).updateOne(
+    await client.db(DB_NAME).collection(SETTINGS_COLLECTION).updateOne(
       { _id: BUILTIN_SETTINGS_ID },
       enabled ? { $pull: { names: name } } : { $addToSet: { names: name } },
       { upsert: true }
@@ -6199,11 +6247,11 @@ ${doc.body}
 </${tagName}_skill>`
   };
 }
-async function getActiveCustomPromptSkills() {
+async function getActiveCustomPromptSkills(env) {
   if (skillsCache && Date.now() - skillsCache.loadedAt < CACHE_TTL_MS$1) {
     return skillsCache.skills;
   }
-  const { collection, client } = await getCollection$1();
+  const { collection, client } = await getCollection(env);
   try {
     const docs = await collection.find({ enabled: true }).toArray();
     const skills = docs.map(toPromptSkill);
@@ -6318,7 +6366,10 @@ async function streamText(props) {
   let customSkills = [];
   let disabledSkills = [];
   try {
-    [customSkills, disabledSkills] = await Promise.all([getActiveCustomPromptSkills(), getDisabledBuiltinSkillNames()]);
+    [customSkills, disabledSkills] = await Promise.all([
+      getActiveCustomPromptSkills(serverEnv),
+      getDisabledBuiltinSkillNames(serverEnv)
+    ]);
   } catch (error) {
     logger$c.error("Failed to load skill configuration", error);
   }
@@ -6454,7 +6505,7 @@ function getProviderSettingsFromCookie(cookieHeader) {
 }
 
 const VALID_SIZES = ["1024x1024", "1792x1024", "1024x1792"];
-async function action$m({ context, request }) {
+async function action$n({ context, request }) {
   const { messages, model, provider } = await request.json();
   const cookieHeader = request.headers.get("Cookie");
   const apiKeys = getApiKeysFromCookie(cookieHeader);
@@ -6503,10 +6554,10 @@ Reply with ONLY valid JSON, no extra text. Example: {"prompt":"A cinematic wide-
 
 const route1 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$m
+  action: action$n
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const loader$q = async ({ request }) => {
+const loader$r = async ({ request }) => {
   const url = new URL(request.url);
   const editorOrigin = url.searchParams.get("editorOrigin") || "https://stackblitz.com";
   console.log("editorOrigin", editorOrigin);
@@ -6537,11 +6588,11 @@ const loader$q = async ({ request }) => {
 
 const route2 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$q
+  loader: loader$r
 }, Symbol.toStringTag, { value: 'Module' }));
 
 const PREVIEW_CHANNEL$1 = "preview-updates";
-async function loader$p({ params }) {
+async function loader$q({ params }) {
   const previewId = params.id;
   if (!previewId) {
     throw new Response("Preview ID is required", { status: 400 });
@@ -6609,7 +6660,7 @@ function WebContainerPreview() {
 const route3 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   default: WebContainerPreview,
-  loader: loader$p
+  loader: loader$q
 }, Symbol.toStringTag, { value: 'Module' }));
 
 let execSync$2;
@@ -6928,7 +6979,7 @@ const getMockProcessInfo = () => {
     }
   ];
 };
-const loader$o = async ({ request: _request }) => {
+const loader$p = async ({ request: _request }) => {
   try {
     return json(getProcessInfo());
   } catch (error) {
@@ -6936,7 +6987,7 @@ const loader$o = async ({ request: _request }) => {
     return json(getMockProcessInfo(), { status: 500 });
   }
 };
-const action$l = async ({ request: _request }) => {
+const action$m = async ({ request: _request }) => {
   try {
     return json(getProcessInfo());
   } catch (error) {
@@ -6947,11 +6998,11 @@ const action$l = async ({ request: _request }) => {
 
 const route4 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$l,
-  loader: loader$o
+  action: action$m,
+  loader: loader$p
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function loader$n({ request, context }) {
+async function loader$o({ request, context }) {
   const url = new URL(request.url);
   const uid = url.searchParams.get("uid");
   if (!uid) {
@@ -7004,10 +7055,10 @@ async function loader$n({ request, context }) {
 
 const route5 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$n
+  loader: loader$o
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function action$k({ request }) {
+async function action$l({ request }) {
   try {
     const body = await request.json();
     const { projectId, token } = body;
@@ -7034,10 +7085,10 @@ async function action$k({ request }) {
 
 const route6 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$k
+  action: action$l
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const loader$m = async ({ request, context }) => {
+const loader$n = async ({ request, context }) => {
   const envVars = {
     hasGithubToken: Boolean(process.env.GITHUB_ACCESS_TOKEN || context.env?.GITHUB_ACCESS_TOKEN),
     hasNetlifyToken: Boolean(process.env.NETLIFY_TOKEN || context.env?.NETLIFY_TOKEN),
@@ -7145,7 +7196,7 @@ const loader$m = async ({ request, context }) => {
 
 const route7 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$m
+  loader: loader$n
 }, Symbol.toStringTag, { value: 'Module' }));
 
 let execSync$1;
@@ -7292,7 +7343,7 @@ const getSystemMemoryInfo = () => {
     };
   }
 };
-const loader$l = async ({ request: _request }) => {
+const loader$m = async ({ request: _request }) => {
   try {
     return json(getSystemMemoryInfo());
   } catch (error) {
@@ -7310,7 +7361,7 @@ const loader$l = async ({ request: _request }) => {
     );
   }
 };
-const action$j = async ({ request: _request }) => {
+const action$k = async ({ request: _request }) => {
   try {
     return json(getSystemMemoryInfo());
   } catch (error) {
@@ -7331,11 +7382,11 @@ const action$j = async ({ request: _request }) => {
 
 const route8 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$j,
-  loader: loader$l
+  action: action$k,
+  loader: loader$m
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function action$i({ context, request }) {
+async function action$j({ context, request }) {
   const { messages, model, provider } = await request.json();
   const cookieHeader = request.headers.get("Cookie");
   const apiKeys = getApiKeysFromCookie(cookieHeader);
@@ -7384,7 +7435,7 @@ Reply with ONLY the template prompt — no explanations, no labels, no quotes.`
 
 const route9 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$i
+  action: action$j
 }, Symbol.toStringTag, { value: 'Module' }));
 
 let cachedProviders = null;
@@ -7411,7 +7462,7 @@ function getProviderInfo(llmManager) {
   }
   return { providers: cachedProviders, defaultProvider: cachedDefaultProvider };
 }
-async function loader$k({
+async function loader$l({
   request,
   params,
   context
@@ -7445,17 +7496,17 @@ async function loader$k({
   });
 }
 
-const route33 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route34 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$k
+  loader: loader$l
 }, Symbol.toStringTag, { value: 'Module' }));
 
 const route10 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$k
+  loader: loader$l
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function loader$j({ request }) {
+async function loader$k({ request }) {
   const url = new URL(request.url);
   const q = url.searchParams.get("q") || "architecture";
   const category = url.searchParams.get("category") || "";
@@ -7499,7 +7550,7 @@ async function loader$j({ request }) {
 
 const route11 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$j
+  loader: loader$k
 }, Symbol.toStringTag, { value: 'Module' }));
 
 let execSync;
@@ -7681,7 +7732,7 @@ const getDiskInfo = () => {
     ];
   }
 };
-const loader$i = async ({ request: _request }) => {
+const loader$j = async ({ request: _request }) => {
   try {
     return json(getDiskInfo());
   } catch (error) {
@@ -7703,7 +7754,7 @@ const loader$i = async ({ request: _request }) => {
     );
   }
 };
-const action$h = async ({ request: _request }) => {
+const action$i = async ({ request: _request }) => {
   try {
     return json(getDiskInfo());
   } catch (error) {
@@ -7728,11 +7779,11 @@ const action$h = async ({ request: _request }) => {
 
 const route12 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$h,
-  loader: loader$i
+  action: action$i,
+  loader: loader$j
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const loader$h = async ({ context, request }) => {
+const loader$i = async ({ context, request }) => {
   const cookieHeader = request.headers.get("Cookie");
   const apiKeysFromCookie = getApiKeysFromCookie(cookieHeader);
   const llmManager = LLMManager.getInstance(context?.cloudflare?.env);
@@ -7756,10 +7807,10 @@ const loader$h = async ({ context, request }) => {
 
 const route13 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$h
+  loader: loader$i
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function loader$g({ request, context }) {
+async function loader$h({ request, context }) {
   const url = new URL(request.url);
   const repo = url.searchParams.get("repo");
   if (!repo) {
@@ -7827,7 +7878,7 @@ async function loader$g({ request, context }) {
 
 const route14 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$g
+  loader: loader$h
 }, Symbol.toStringTag, { value: 'Module' }));
 
 var define_PKG_DEPENDENCIES_default = { "@ai-sdk/amazon-bedrock": "1.0.6", "@ai-sdk/anthropic": "0.0.39", "@ai-sdk/cohere": "1.0.3", "@ai-sdk/deepseek": "0.1.3", "@ai-sdk/google": "0.0.52", "@ai-sdk/mistral": "0.0.43", "@ai-sdk/openai": "1.1.2", "@codemirror/autocomplete": "^6.18.3", "@codemirror/commands": "^6.7.1", "@codemirror/lang-cpp": "^6.0.2", "@codemirror/lang-css": "^6.3.1", "@codemirror/lang-html": "^6.4.9", "@codemirror/lang-javascript": "^6.2.2", "@codemirror/lang-json": "^6.0.1", "@codemirror/lang-markdown": "^6.3.1", "@codemirror/lang-python": "^6.1.6", "@codemirror/lang-sass": "^6.0.2", "@codemirror/lang-vue": "^0.1.3", "@codemirror/lang-wast": "^6.0.2", "@codemirror/language": "^6.10.6", "@codemirror/search": "^6.5.8", "@codemirror/state": "^6.4.1", "@codemirror/view": "^6.35.0", "@headlessui/react": "^2.2.0", "@heroicons/react": "^2.2.0", "@iconify-json/svg-spinners": "^1.2.1", "@lezer/highlight": "^1.2.1", "@nanostores/react": "^0.7.3", "@octokit/rest": "^21.0.2", "@octokit/types": "^13.6.2", "@openrouter/ai-sdk-provider": "^0.0.5", "@phosphor-icons/react": "^2.1.7", "@radix-ui/react-checkbox": "^1.1.4", "@radix-ui/react-collapsible": "^1.0.3", "@radix-ui/react-context-menu": "^2.2.2", "@radix-ui/react-dialog": "^1.1.5", "@radix-ui/react-dropdown-menu": "^2.1.6", "@radix-ui/react-label": "^2.1.1", "@radix-ui/react-popover": "^1.1.5", "@radix-ui/react-progress": "^1.0.3", "@radix-ui/react-scroll-area": "^1.2.2", "@radix-ui/react-separator": "^1.1.0", "@radix-ui/react-switch": "^1.1.1", "@radix-ui/react-tabs": "^1.1.2", "@radix-ui/react-tooltip": "^1.1.4", "@remix-run/cloudflare": "^2.15.2", "@remix-run/cloudflare-pages": "^2.15.2", "@remix-run/node": "^2.15.2", "@remix-run/react": "^2.15.2", "@tanstack/react-virtual": "^3.13.0", "@types/react-beautiful-dnd": "^13.1.8", "@uiw/codemirror-theme-vscode": "^4.23.6", "@unocss/reset": "^0.61.9", "@webcontainer/api": "1.6.1-internal.1", "@xterm/addon-fit": "^0.10.0", "@xterm/addon-web-links": "^0.11.0", "@xterm/xterm": "^5.5.0", ai: "4.1.2", bcryptjs: "^3.0.3", chalk: "^5.4.1", "chart.js": "^4.4.7", "class-variance-authority": "^0.7.0", clsx: "^2.1.0", "date-fns": "^3.6.0", diff: "^5.2.0", dotenv: "^16.4.7", "electron-log": "^5.2.3", "electron-store": "^10.0.0", "electron-updater": "^6.3.9", "file-saver": "^2.0.5", "framer-motion": "^11.12.0", ignore: "^6.0.2", isbot: "^4.4.0", "isomorphic-git": "^1.27.2", istextorbinary: "^9.5.0", jose: "^5.9.6", "js-cookie": "^3.0.5", jspdf: "^2.5.2", jszip: "^3.10.1", "lucide-react": "^0.485.0", mime: "^4.0.4", mongodb: "^7.3.0", nanostores: "^0.10.3", "ollama-ai-provider": "^0.15.2", "path-browserify": "^1.0.1", react: "^18.3.1", "react-beautiful-dnd": "^13.1.1", "react-chartjs-2": "^5.3.0", "react-dnd": "^16.0.1", "react-dnd-html5-backend": "^16.0.1", "react-dom": "^18.3.1", "react-hotkeys-hook": "^4.6.1", "react-icons": "^5.4.0", "react-markdown": "^9.0.1", "react-qrcode-logo": "^3.0.0", "react-resizable-panels": "^2.1.7", "react-toastify": "^10.0.6", "react-window": "^1.8.11", "rehype-raw": "^7.0.0", "rehype-sanitize": "^6.0.0", "remark-gfm": "^4.0.0", "remix-island": "^0.2.0", "remix-utils": "^7.7.0", "rollup-plugin-node-polyfills": "^0.2.1", shiki: "^1.24.0", "tailwind-merge": "^2.2.1", "unist-util-visit": "^5.0.0", "use-debounce": "^10.0.4", "vite-plugin-node-polyfills": "^0.22.0", zod: "^3.24.1", zustand: "^5.0.3" };
@@ -7836,9 +7887,9 @@ var define_PKG_OPTIONAL_DEPENDENCIES_default = {};
 var define_PKG_PEER_DEPENDENCIES_default = {};
 const getGitInfo = () => {
   return {
-    commitHash: "109b9eb",
+    commitHash: "857cbf2",
     branch: "stable",
-    commitTime: "Tue Jun 16 07:26:30 2026 +0500",
+    commitTime: "Tue Jun 16 07:32:48 2026 +0500",
     author: "usman",
     email: "theusman620@gmail.com",
     remoteUrl: "https://github.com/the-usman/sitara-builder.git",
@@ -7873,7 +7924,7 @@ const getAppResponse = () => {
     }
   };
 };
-const loader$f = async ({ request: _request }) => {
+const loader$g = async ({ request: _request }) => {
   try {
     return json(getAppResponse());
   } catch (error) {
@@ -7907,7 +7958,7 @@ const loader$f = async ({ request: _request }) => {
     );
   }
 };
-const action$g = async ({ request: _request }) => {
+const action$h = async ({ request: _request }) => {
   try {
     return json(getAppResponse());
   } catch (error) {
@@ -7944,11 +7995,11 @@ const action$g = async ({ request: _request }) => {
 
 const route15 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$g,
-  loader: loader$f
+  action: action$h,
+  loader: loader$g
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const loader$e = async ({ request, context }) => {
+const loader$f = async ({ request, context }) => {
   console.log("Git info API called with URL:", request.url);
   if (request.method === "OPTIONS") {
     return new Response(null, {
@@ -8129,9 +8180,9 @@ const loader$e = async ({ request, context }) => {
   }
   const gitInfo = {
     local: {
-      commitHash: "109b9eb" ,
+      commitHash: "857cbf2" ,
       branch: "stable" ,
-      commitTime: "Tue Jun 16 07:26:30 2026 +0500" ,
+      commitTime: "Tue Jun 16 07:32:48 2026 +0500" ,
       author: "usman" ,
       email: "theusman620@gmail.com" ,
       remoteUrl: "https://github.com/the-usman/sitara-builder.git" ,
@@ -8149,7 +8200,7 @@ const loader$e = async ({ request, context }) => {
 
 const route16 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$e
+  loader: loader$f
 }, Symbol.toStringTag, { value: 'Module' }));
 
 const SIZE_TO_FAL = {
@@ -8162,7 +8213,7 @@ const SIZE_TO_GEMINI = {
   "1792x1024": "16:9",
   "1024x1792": "9:16"
 };
-async function action$f({ context, request }) {
+async function action$g({ context, request }) {
   const {
     prompt,
     size = "1024x1024",
@@ -8297,29 +8348,17 @@ async function generateWithOpenAI({
 
 const route17 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$f
+  action: action$g
 }, Symbol.toStringTag, { value: 'Module' }));
 
-if (typeof navigator === "undefined" || navigator.userAgent !== "Cloudflare-Workers") {
-  try {
-    dns.setServers(["8.8.8.8", "1.1.1.1"]);
-  } catch {
-  }
+const COLLECTION$2 = "web_builders";
+function withChats(env, fn) {
+  return withMongo(env, (db) => fn(db.collection(COLLECTION$2)));
 }
-const MONGODB_URI$2 = process.env.MONGODB_URI || "mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/";
-const DB_NAME$1 = "project_db_client";
-const COLLECTION$1 = "web_builders";
-async function getCollection() {
-  const client = new MongoClient(MONGODB_URI$2);
-  await client.connect();
-  const collection = client.db(DB_NAME$1).collection(COLLECTION$1);
-  return { collection, client };
-}
-async function upsertChat(trackingId, name, createdBy, selectedClient, modelKey, modelUsage, clientChatId) {
-  const { collection, client } = await getCollection();
-  try {
+async function upsertChat(trackingId, name, createdBy, selectedClient, modelKey, modelUsage, clientChatId, env) {
+  await withChats(env, async (collection) => {
     const now = /* @__PURE__ */ new Date();
-    await collection.updateOne(
+    return collection.updateOne(
       { trackingId },
       {
         $set: {
@@ -8348,29 +8387,19 @@ async function upsertChat(trackingId, name, createdBy, selectedClient, modelKey,
       },
       { upsert: true }
     );
-  } finally {
-    await client.close();
-  }
+  });
 }
-async function updateChatUrl(clientChatId, field, url) {
-  const { collection, client } = await getCollection();
-  try {
-    await collection.updateOne(
-      { clientChatId },
-      { $set: { [field]: url, updatedAt: /* @__PURE__ */ new Date() } }
-    );
-  } finally {
-    await client.close();
-  }
+async function updateChatUrl(clientChatId, field, url, env) {
+  await withChats(
+    env,
+    (collection) => collection.updateOne({ clientChatId }, { $set: { [field]: url, updatedAt: /* @__PURE__ */ new Date() } })
+  );
 }
-async function getChats(userId, role) {
-  const { collection, client } = await getCollection();
-  try {
+async function getChats(userId, role, env) {
+  return withChats(env, (collection) => {
     const filter = role === "super_admin" ? {} : { "createdBy.userId": userId };
-    return await collection.find(filter).sort({ updatedAt: -1 }).toArray();
-  } finally {
-    await client.close();
-  }
+    return collection.find(filter).sort({ updatedAt: -1 }).toArray();
+  });
 }
 const upsertProject = upsertChat;
 const updateProjectUrl = updateChatUrl;
@@ -8382,7 +8411,8 @@ async function sha1(message) {
   const hashHex = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   return hashHex;
 }
-async function action$e({ request }) {
+async function action$f({ request, context }) {
+  const env = context.cloudflare?.env;
   try {
     const { siteId, files, token, chatId } = await request.json();
     if (!token) {
@@ -8535,7 +8565,7 @@ async function action$e({ request }) {
         if (Object.keys(files).length === 0 || status.summary?.status === "ready") {
           const deployUrl = status.ssl_url || status.url;
           if (chatId && deployUrl) {
-            updateProjectUrl(chatId, "netlifyUrl", deployUrl).catch(console.error);
+            updateProjectUrl(chatId, "netlifyUrl", deployUrl, env).catch(console.error);
           }
           return json({
             success: true,
@@ -8573,15 +8603,9 @@ async function action$e({ request }) {
 
 const route18 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$e
+  action: action$f
 }, Symbol.toStringTag, { value: 'Module' }));
 
-if (typeof navigator === "undefined" || navigator.userAgent !== "Cloudflare-Workers") {
-  try {
-    dns.setServers(["8.8.8.8", "1.1.1.1"]);
-  } catch {
-  }
-}
 function scryptAsync(password, salt, keylen) {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, keylen, (err, key) => {
@@ -8590,23 +8614,14 @@ function scryptAsync(password, salt, keylen) {
     });
   });
 }
-const MONGODB_URI$1 = process.env.MONGODB_URI || "mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/";
-const DB_NAME = "project_db_client";
-const COLLECTION = "users";
+const COLLECTION$1 = "users";
 const AUTH_COOKIE = "auth_token";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 function getJwtSecret(env) {
-  const secret = env?.JWT_SECRET || process.env.JWT_SECRET || "sitara-builder-jwt-secret-change-in-production";
-  return new TextEncoder().encode(secret);
+  return new TextEncoder().encode(requireServerSecret("JWT_SECRET", env));
 }
-async function findUserByEmail(email) {
-  const client = new MongoClient(MONGODB_URI$1);
-  try {
-    await client.connect();
-    return await client.db(DB_NAME).collection(COLLECTION).findOne({ email: email.toLowerCase().trim() });
-  } finally {
-    await client.close();
-  }
+async function findUserByEmail(email, env) {
+  return withMongo(env, (db) => db.collection(COLLECTION$1).findOne({ email: email.toLowerCase().trim() }));
 }
 function checkAccess(user) {
   if (!user.active) {
@@ -8650,8 +8665,8 @@ async function signJwt(payload, env) {
   return new SignJWT({ ...payload }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("7d").sign(secret);
 }
 async function verifyJwt(token, env) {
+  const secret = getJwtSecret(env);
   try {
-    const secret = getJwtSecret(env);
     const { payload } = await jwtVerify(token, secret);
     return payload;
   } catch {
@@ -8677,19 +8692,20 @@ async function requireAuth(request, env) {
   return user;
 }
 
-async function action$d({ request, context }) {
-  await requireAuth(request, context.cloudflare?.env);
+async function action$e({ request, context }) {
+  const env = context.cloudflare?.env;
+  await requireAuth(request, env);
   const { chatId, field, url } = await request.json();
   if (!chatId || !field || !url) {
     return json({ error: "chatId, field, and url are required" }, { status: 400 });
   }
-  await updateProjectUrl(chatId, field, url);
+  await updateProjectUrl(chatId, field, url, env);
   return json({ success: true });
 }
 
 const route19 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$d
+  action: action$e
 }, Symbol.toStringTag, { value: 'Module' }));
 
 const VALID_CATEGORIES = [
@@ -8703,7 +8719,7 @@ const VALID_CATEGORIES = [
   "fashion-style",
   "art-abstract"
 ];
-async function action$c({ context, request }) {
+async function action$d({ context, request }) {
   const { messages, model, provider } = await request.json();
   const cookieHeader = request.headers.get("Cookie");
   const apiKeys = getApiKeysFromCookie(cookieHeader);
@@ -8752,11 +8768,11 @@ Reply with ONLY valid JSON, no extra text. Example: {"query":"modern dining chai
 
 const route20 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$c
+  action: action$d
 }, Symbol.toStringTag, { value: 'Module' }));
 
 const logger$b = createScopedLogger("api.supabase.query");
-async function action$b({ request }) {
+async function action$c({ request }) {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
@@ -8836,10 +8852,10 @@ async function action$b({ request }) {
 
 const route21 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$b
+  action: action$c
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const loader$d = async ({ context, request }) => {
+const loader$e = async ({ context, request }) => {
   const url = new URL(request.url);
   const provider = url.searchParams.get("provider");
   if (!provider) {
@@ -8859,10 +8875,10 @@ const loader$d = async ({ context, request }) => {
 
 const route22 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  loader: loader$d
+  loader: loader$e
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function loader$c({ request }) {
+async function loader$d({ request }) {
   const url = new URL(request.url);
   const projectId = url.searchParams.get("projectId");
   const token = url.searchParams.get("token");
@@ -8906,7 +8922,8 @@ async function loader$c({ request }) {
     return json({ error: "Failed to fetch deployment" }, { status: 500 });
   }
 }
-async function action$a({ request }) {
+async function action$b({ request, context }) {
+  const env = context.cloudflare?.env;
   try {
     const { projectId, files, token, chatId } = await request.json();
     if (!token) {
@@ -9045,7 +9062,7 @@ async function action$a({ request }) {
     }
     const finalUrl = projectInfo.url || deploymentUrl;
     if (chatId && finalUrl) {
-      updateProjectUrl(chatId, "vercelUrl", finalUrl).catch(console.error);
+      updateProjectUrl(chatId, "vercelUrl", finalUrl, env).catch(console.error);
     }
     return json({
       success: true,
@@ -9064,21 +9081,21 @@ async function action$a({ request }) {
 
 const route23 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$a,
-  loader: loader$c
+  action: action$b,
+  loader: loader$d
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function loader$b(_) {
+async function loader$c(_) {
   throw redirect("/login", { headers: { "Set-Cookie": clearAuthCookie() } });
 }
-async function action$9(_) {
+async function action$a(_) {
   throw redirect("/login", { headers: { "Set-Cookie": clearAuthCookie() } });
 }
 
 const route24 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$9,
-  loader: loader$b
+  action: action$a,
+  loader: loader$c
 }, Symbol.toStringTag, { value: 'Module' }));
 
 const ALLOW_HEADERS = [
@@ -9118,10 +9135,10 @@ const EXPOSE_HEADERS = [
   "x-github-request-id",
   "x-redirected-url"
 ];
-async function action$8({ request, params }) {
+async function action$9({ request, params }) {
   return handleProxyRequest(request, params["*"]);
 }
-async function loader$a({ request, params }) {
+async function loader$b({ request, params }) {
   return handleProxyRequest(request, params["*"]);
 }
 async function handleProxyRequest(request, path) {
@@ -9209,11 +9226,11 @@ async function handleProxyRequest(request, path) {
 
 const route25 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$8,
-  loader: loader$a
+  action: action$9,
+  loader: loader$b
 }, Symbol.toStringTag, { value: 'Module' }));
 
-async function action$7({ context, request }) {
+async function action$8({ context, request }) {
   const { imageData, model, provider } = await request.json();
   const cookieHeader = request.headers.get("Cookie");
   const apiKeys = getApiKeysFromCookie(cookieHeader);
@@ -9267,7 +9284,172 @@ Examples: pizza-hero-banner, team-photo, product-showcase`
 
 const route26 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
-  action: action$7
+  action: action$8
+}, Symbol.toStringTag, { value: 'Module' }));
+
+const COLLECTION = "chat_history";
+const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
+class ChatSyncValidationError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+    this.name = "ChatSyncValidationError";
+  }
+}
+function parseChatSyncPayload(body) {
+  if (!body || typeof body !== "object") {
+    throw new ChatSyncValidationError("Request body must be an object", 400);
+  }
+  const raw = body;
+  if (typeof raw.trackingId !== "string" || raw.trackingId.trim() === "") {
+    throw new ChatSyncValidationError("trackingId is required", 400);
+  }
+  if (!Array.isArray(raw.messages)) {
+    throw new ChatSyncValidationError("messages must be an array", 400);
+  }
+  const payload = {
+    trackingId: raw.trackingId,
+    urlId: typeof raw.urlId === "string" ? raw.urlId : void 0,
+    description: typeof raw.description === "string" ? raw.description : void 0,
+    messages: raw.messages,
+    metadata: raw.metadata
+  };
+  if (raw.snapshot) {
+    const snap = raw.snapshot;
+    if (typeof snap.filesGzip !== "string" || typeof snap.chatIndex !== "string") {
+      throw new ChatSyncValidationError("snapshot requires chatIndex and filesGzip", 400);
+    }
+    const approxBytes = Math.floor(snap.filesGzip.length * 3 / 4);
+    if (approxBytes > MAX_SNAPSHOT_BYTES) {
+      throw new ChatSyncValidationError(
+        `Snapshot is too large to sync (${Math.round(approxBytes / 1024 / 1024)}MB compressed, limit ${MAX_SNAPSHOT_BYTES / 1024 / 1024}MB)`,
+        413
+      );
+    }
+    payload.snapshot = {
+      chatIndex: snap.chatIndex,
+      summary: typeof snap.summary === "string" ? snap.summary : void 0,
+      filesGzip: snap.filesGzip,
+      uncompressedBytes: typeof snap.uncompressedBytes === "number" ? snap.uncompressedBytes : 0
+    };
+  }
+  return payload;
+}
+async function putSyncedChat(userId, payload, env) {
+  await withMongo(env, async (db) => {
+    const now = /* @__PURE__ */ new Date();
+    const snapshot = payload.snapshot ? {
+      chatIndex: payload.snapshot.chatIndex,
+      summary: payload.snapshot.summary,
+      filesGzip: new Binary(Buffer.from(payload.snapshot.filesGzip, "base64")),
+      uncompressedBytes: payload.snapshot.uncompressedBytes
+    } : void 0;
+    return db.collection(COLLECTION).updateOne(
+      { userId, trackingId: payload.trackingId },
+      {
+        $set: {
+          urlId: payload.urlId,
+          description: payload.description,
+          messages: payload.messages,
+          metadata: payload.metadata,
+          updatedAt: now,
+          /*
+           * Only overwrite the stored snapshot when this push actually carries one, so a
+           * messages-only sync never wipes the files needed to restore the project.
+           */
+          ...snapshot ? { snapshot } : {}
+        },
+        $setOnInsert: { userId, trackingId: payload.trackingId, createdAt: now }
+      },
+      { upsert: true }
+    );
+  });
+}
+async function getSyncedChat(userId, trackingIdOrUrlId, env) {
+  return withMongo(env, async (db) => {
+    const doc = await db.collection(COLLECTION).findOne({ userId, $or: [{ trackingId: trackingIdOrUrlId }, { urlId: trackingIdOrUrlId }] });
+    if (!doc) {
+      return null;
+    }
+    return {
+      trackingId: doc.trackingId,
+      urlId: doc.urlId,
+      description: doc.description,
+      messages: doc.messages,
+      metadata: doc.metadata,
+      snapshot: doc.snapshot ? {
+        chatIndex: doc.snapshot.chatIndex,
+        summary: doc.snapshot.summary,
+        filesGzip: Buffer.from(doc.snapshot.filesGzip.buffer).toString("base64"),
+        uncompressedBytes: doc.snapshot.uncompressedBytes
+      } : void 0,
+      updatedAt: doc.updatedAt.toISOString()
+    };
+  });
+}
+async function listSyncedChats(userId, env) {
+  return withMongo(env, async (db) => {
+    const docs = await db.collection(COLLECTION).aggregate([
+      { $match: { userId } },
+      {
+        $project: {
+          trackingId: 1,
+          urlId: 1,
+          description: 1,
+          updatedAt: 1,
+          messageCount: { $size: { $ifNull: ["$messages", []] } },
+          hasSnapshot: { $cond: [{ $ifNull: ["$snapshot", false] }, true, false] }
+        }
+      },
+      { $sort: { updatedAt: -1 } }
+    ]).toArray();
+    return docs.map((d) => ({
+      trackingId: d.trackingId,
+      urlId: d.urlId,
+      description: d.description,
+      messageCount: d.messageCount ?? 0,
+      hasSnapshot: Boolean(d.hasSnapshot),
+      updatedAt: new Date(d.updatedAt).toISOString()
+    }));
+  });
+}
+
+async function loader$a({ request, context }) {
+  const env = context.cloudflare?.env;
+  const user = await requireAuth(request, env);
+  const trackingId = new URL(request.url).searchParams.get("trackingId");
+  if (!trackingId) {
+    return json({ chats: await listSyncedChats(user.userId, env) });
+  }
+  const chat = await getSyncedChat(user.userId, trackingId, env);
+  if (!chat) {
+    return json({ error: "Chat not found" }, { status: 404 });
+  }
+  return json({ chat });
+}
+async function action$7({ request, context }) {
+  const env = context.cloudflare?.env;
+  const user = await requireAuth(request, env);
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed" }, { status: 405 });
+  }
+  try {
+    const payload = parseChatSyncPayload(await request.json());
+    await putSyncedChat(user.userId, payload, env);
+    return json({ success: true, trackingId: payload.trackingId });
+  } catch (error) {
+    if (error instanceof ChatSyncValidationError) {
+      return json({ error: error.message }, { status: error.status });
+    }
+    console.error("[chat-sync] upsert failed:", error);
+    return json({ error: "Failed to sync chat" }, { status: 500 });
+  }
+}
+
+const route27 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+  __proto__: null,
+  action: action$7,
+  loader: loader$a
 }, Symbol.toStringTag, { value: 'Module' }));
 
 async function action$6(args) {
@@ -9382,18 +9564,19 @@ async function enhancerAction({ context, request }) {
   }
 }
 
-const route27 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route28 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action: action$6
 }, Symbol.toStringTag, { value: 'Module' }));
 
 async function loader$9({ request, context }) {
-  const user = await requireAuth(request, context.cloudflare?.env);
-  const chats = await getChats(user.userId, user.role);
+  const env = context.cloudflare?.env;
+  const user = await requireAuth(request, env);
+  const chats = await getChats(user.userId, user.role, env);
   return json({ chats });
 }
 
-const route28 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route29 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   loader: loader$9
 }, Symbol.toStringTag, { value: 'Module' }));
@@ -9442,18 +9625,16 @@ const action$5 = async ({ request }) => {
   }
 };
 
-const route29 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route30 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action: action$5
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/";
 async function loader$8({ request, context }) {
-  await requireAuth(request, context.cloudflare?.env);
-  const client = new MongoClient(MONGODB_URI);
-  try {
-    await client.connect();
-    const docs = await client.db("project_db_client").collection("clients").find({}, { projection: { _id: 1, clientName: 1, productName: 1 } }).sort({ clientName: 1 }).toArray();
+  const env = context.cloudflare?.env;
+  await requireAuth(request, env);
+  return withMongo(env, async (db) => {
+    const docs = await db.collection("clients").find({}, { projection: { _id: 1, clientName: 1, productName: 1 } }).sort({ clientName: 1 }).toArray();
     return json({
       clients: docs.map((d) => ({
         _id: d._id.toString(),
@@ -9461,17 +9642,15 @@ async function loader$8({ request, context }) {
         productName: d.productName
       }))
     });
-  } finally {
-    await client.close();
-  }
+  });
 }
 
-const route30 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route31 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   loader: loader$8
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const __vite_import_meta_env__ = {"BASE_URL": "/", "DEV": false, "LMSTUDIO_API_BASE_URL": "", "MODE": "production", "OLLAMA_API_BASE_URL": "", "OPENAI_LIKE_API_BASE_URL": "", "PROD": true, "SSR": true, "TOGETHER_API_BASE_URL": "", "VITE_GITHUB_ACCESS_TOKEN": "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", "VITE_GITHUB_TOKEN_TYPE": "classic", "VITE_LOG_LEVEL": "", "VITE_NETLIFY_ACCESS_TOKEN": "nfp_Ct8Ptp7CmiZfB3Xv4JBtt6atyUVSCd9j3f25", "VITE_VERCEL_ACCESS_TOKEN": "vcp_3VlTOglFCKZkhLZ9UAGoeAR1RaeN4fbzLdnf5NA9CYP1F7wlyz2ZnYqX"};
+const __vite_import_meta_env__ = {"BASE_URL": "/", "DEV": false, "LMSTUDIO_API_BASE_URL": "", "MODE": "production", "OLLAMA_API_BASE_URL": "", "OPENAI_LIKE_API_BASE_URL": "", "PROD": true, "SSR": true, "TOGETHER_API_BASE_URL": "", "VITE_GITHUB_ACCESS_TOKEN": "", "VITE_GITHUB_TOKEN_TYPE": "classic", "VITE_LOG_LEVEL": "debug"};
 async function action$4(args) {
   return llmCallAction(args);
 }
@@ -9586,7 +9765,7 @@ async function llmCallAction({ context, request }) {
   }
 }
 
-const route31 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route32 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action: action$4
 }, Symbol.toStringTag, { value: 'Module' }));
@@ -9598,17 +9777,19 @@ const loader$7 = async ({ request: _request }) => {
   });
 };
 
-const route32 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route33 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   loader: loader$7
 }, Symbol.toStringTag, { value: 'Module' }));
 
 async function loader$6({ request, context }) {
-  await requireAuth(request, context.cloudflare?.env);
-  return json({ skills: await listCustomSkills() });
+  const env = context.cloudflare?.env;
+  await requireAuth(request, env);
+  return json({ skills: await listCustomSkills(env) });
 }
 async function action$3({ request, context }) {
-  const user = await requireAuth(request, context.cloudflare?.env);
+  const env = context.cloudflare?.env;
+  const user = await requireAuth(request, env);
   if (user.role !== "super_admin") {
     return json({ error: "Only a super admin can manage skills." }, { status: 403 });
   }
@@ -9622,7 +9803,7 @@ async function action$3({ request, context }) {
           return json({ error: "url is required" }, { status: 400 });
         }
         const parsed = await importSkillFromGit(body.url);
-        const skill = await saveCustomSkill(parsed, { type: "git", ref: body.url }, createdBy, importOptions);
+        const skill = await saveCustomSkill(parsed, { type: "git", ref: body.url }, createdBy, importOptions, env);
         return json({ success: true, skill: { name: skill.name, description: skill.description } });
       }
       case "add-md": {
@@ -9630,7 +9811,7 @@ async function action$3({ request, context }) {
           return json({ error: "content is required" }, { status: 400 });
         }
         const parsed = parseSkillMd(body.content, body.filename);
-        const skill = await saveCustomSkill(parsed, { type: "md", ref: body.filename }, createdBy, importOptions);
+        const skill = await saveCustomSkill(parsed, { type: "md", ref: body.filename }, createdBy, importOptions, env);
         return json({ success: true, skill: { name: skill.name, description: skill.description } });
       }
       case "add-zip": {
@@ -9638,14 +9819,14 @@ async function action$3({ request, context }) {
           return json({ error: "dataBase64 is required" }, { status: 400 });
         }
         const parsed = await importSkillFromZip(body.dataBase64, body.filename);
-        const skill = await saveCustomSkill(parsed, { type: "zip", ref: body.filename }, createdBy, importOptions);
+        const skill = await saveCustomSkill(parsed, { type: "zip", ref: body.filename }, createdBy, importOptions, env);
         return json({ success: true, skill: { name: skill.name, description: skill.description } });
       }
       case "toggle": {
         if (!body.name || typeof body.enabled !== "boolean") {
           return json({ error: "name and enabled are required" }, { status: 400 });
         }
-        await setCustomSkillEnabled(body.name, body.enabled);
+        await setCustomSkillEnabled(body.name, body.enabled, env);
         return json({ success: true });
       }
       case "toggle-builtin": {
@@ -9655,14 +9836,14 @@ async function action$3({ request, context }) {
         if (!promptSkills.some((s) => s.name === body.name)) {
           return json({ error: `Unknown built-in skill: ${body.name}` }, { status: 400 });
         }
-        await setBuiltinSkillEnabled(body.name, body.enabled);
+        await setBuiltinSkillEnabled(body.name, body.enabled, env);
         return json({ success: true });
       }
       case "delete": {
         if (!body.name) {
           return json({ error: "name is required" }, { status: 400 });
         }
-        await deleteCustomSkill(body.name);
+        await deleteCustomSkill(body.name, env);
         return json({ success: true });
       }
       default:
@@ -9673,7 +9854,7 @@ async function action$3({ request, context }) {
   }
 }
 
-const route34 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route35 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action: action$3,
   loader: loader$6
@@ -9698,7 +9879,7 @@ const action$2 = async ({ request }) => {
   );
 };
 
-const route35 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route36 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action: action$2
 }, Symbol.toStringTag, { value: 'Module' }));
@@ -10457,7 +10638,8 @@ async function chatAction({ context, request }) {
                       completionCost: cost.completionCost,
                       cost: cost.totalCost
                     },
-                    chatId
+                    chatId,
+                    env
                   );
                   console.log("[chat-tracker] upsert SUCCESS for", trackingId);
                 } catch (err) {
@@ -10622,7 +10804,7 @@ function classifyProviderError(error) {
   return { code: "unknown", message: error?.message ?? "An unexpected error occurred. Please try again." };
 }
 
-const route36 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route37 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action: action$1
 }, Symbol.toStringTag, { value: 'Module' }));
@@ -10797,7 +10979,7 @@ const APIKeyManager = ({ provider, apiKey, setApiKey }) => {
           value: tempKey,
           placeholder: "Enter API Key",
           onChange: (e) => setTempKey(e.target.value),
-          className: "w-[300px] px-3 py-1.5 text-sm rounded border border-bolt-elements-borderColor \n                        bg-bolt-elements-prompt-background text-bolt-elements-textPrimary \n                        focus:outline-none focus:ring-2 focus:ring-bolt-elements-focus"
+          className: "w-[300px] px-3 py-1.5 text-sm rounded border border-bolt-elements-borderColor \r\n                        bg-bolt-elements-prompt-background text-bolt-elements-textPrimary \r\n                        focus:outline-none focus:ring-2 focus:ring-bolt-elements-focus"
         }
       ),
       /* @__PURE__ */ jsx(
@@ -15143,43 +15325,7 @@ function RepositorySelectionDialog({ isOpen, onClose, onSelect }) {
     }
   };
   useEffect(() => {
-    const savedConnection = getLocalStorage("github_connection");
-    if (!savedConnection && "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") {
-      const token = "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";
-      const tokenType = "classic";
-      fetch("https://api.github.com/user", {
-        headers: {
-          Accept: "application/vnd.github.v3+json",
-          Authorization: `Bearer ${token}`
-        }
-      }).then((response) => {
-        if (!response.ok) {
-          throw new Error("Invalid token or unauthorized");
-        }
-        return response.json();
-      }).then((data) => {
-        const userData = data;
-        const newConnection = {
-          token,
-          tokenType,
-          user: {
-            login: userData.login,
-            avatar_url: userData.avatar_url,
-            name: userData.name || userData.login
-          },
-          connected_at: (/* @__PURE__ */ new Date()).toISOString()
-        };
-        localStorage.setItem("github_connection", JSON.stringify(newConnection));
-        Cookies.set("githubToken", token);
-        Cookies.set("githubUsername", userData.login);
-        Cookies.set("git:github.com", JSON.stringify({ username: token, password: "x-oauth-basic" }));
-        if (isOpen && activeTab === "my-repos") {
-          fetchUserRepos();
-        }
-      }).catch((error) => {
-        console.error("Failed to initialize GitHub connection from environment variables:", error);
-      });
-    }
+    getLocalStorage("github_connection");
   }, [isOpen]);
   useEffect(() => {
     if (isOpen && activeTab === "my-repos") {
@@ -15311,12 +15457,7 @@ function RepositorySelectionDialog({ isOpen, onClose, onSelect }) {
           Accept: "application/vnd.github.v3+json",
           Authorization: `Bearer ${connection.token}`
         };
-      } else if ("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") {
-        headers = {
-          Accept: "application/vnd.github.v3+json",
-          Authorization: `Bearer ${"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"}`
-        };
-      }
+      } else if ("") ;
       const repoInfoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
         headers
       });
@@ -19684,7 +19825,7 @@ function Index$1() {
   ] });
 }
 
-const route40 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route41 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   default: Index$1,
   loader: loader$5,
@@ -19696,15 +19837,16 @@ async function loader$4(args) {
   return json({ id: args.params.id });
 }
 
-const route37 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route38 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   default: Index$1,
   loader: loader$4
 }, Symbol.toStringTag, { value: 'Module' }));
 
 async function loader$3({ request, context }) {
-  const user = await requireAuth(request, context.cloudflare?.env);
-  const chats = await getChats(user.userId, user.role);
+  const env = context.cloudflare?.env;
+  const user = await requireAuth(request, env);
+  const chats = await getChats(user.userId, user.role, env);
   return json({ chats, role: user.role });
 }
 function formatTokens(n) {
@@ -19790,7 +19932,7 @@ function ChatsPage() {
             /* @__PURE__ */ jsx("td", { className: "px-4 py-3", children: /* @__PURE__ */ jsx(
               "a",
               {
-                href: `/chat/${c.trackingId}`,
+                href: `/chat/${c.clientChatId || c.trackingId}`,
                 className: "font-medium text-white hover:text-purple-300 transition-colors",
                 children: c.name || c.trackingId
               }
@@ -19818,15 +19960,19 @@ function ChatsPage() {
   ] });
 }
 
-const route38 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route39 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   default: ChatsPage,
   loader: loader$3
 }, Symbol.toStringTag, { value: 'Module' }));
 
 async function loader$2({ request, context }) {
-  const user = await requireAuth(request, context.cloudflare?.env);
-  const [customSkills, disabledBuiltins] = await Promise.all([listCustomSkills(), getDisabledBuiltinSkillNames()]);
+  const env = context.cloudflare?.env;
+  const user = await requireAuth(request, env);
+  const [customSkills, disabledBuiltins] = await Promise.all([
+    listCustomSkills(env),
+    getDisabledBuiltinSkillNames(env)
+  ]);
   const builtIn = promptSkills.map((s) => ({
     name: s.name,
     description: s.description,
@@ -20088,7 +20234,7 @@ function SkillsPage() {
   ] });
 }
 
-const route39 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route40 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   default: SkillsPage,
   loader: loader$2
@@ -20234,7 +20380,7 @@ function LoginPage() {
   ] }) });
 }
 
-const route41 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route42 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   action,
   default: LoginPage,
@@ -20261,14 +20407,14 @@ function Index() {
   ] });
 }
 
-const route42 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
+const route43 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
   default: Index,
   loader,
   meta
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes':{'root':{'id':'root','parentId':undefined,'path':'','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/root-CMI9uKCT.js','imports':['/assets/components-Dwsc2uka.js','/assets/client-only-DOmRX3_0.js'],'css':['/assets/root-BGbzvQfm.css']},'routes/api.image-prompt-suggest':{'id':'routes/api.image-prompt-suggest','parentId':'root','path':'api/image-prompt-suggest','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.image-prompt-suggest-l0sNRNKZ.js','imports':[],'css':[]},'routes/webcontainer.connect.$id':{'id':'routes/webcontainer.connect.$id','parentId':'root','path':'webcontainer/connect/:id','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/webcontainer.connect._id-l0sNRNKZ.js','imports':[],'css':[]},'routes/webcontainer.preview.$id':{'id':'routes/webcontainer.preview.$id','parentId':'root','path':'webcontainer/preview/:id','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/webcontainer.preview._id-CFDPOoZw.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/api.system.process-info':{'id':'routes/api.system.process-info','parentId':'root','path':'api/system/process-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.process-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.sketchfab-download':{'id':'routes/api.sketchfab-download','parentId':'root','path':'api/sketchfab-download','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.sketchfab-download-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.supabase.variables':{'id':'routes/api.supabase.variables','parentId':'routes/api.supabase','path':'variables','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.supabase.variables-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.diagnostics':{'id':'routes/api.system.diagnostics','parentId':'root','path':'api/system/diagnostics','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.diagnostics-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.memory-info':{'id':'routes/api.system.memory-info','parentId':'root','path':'api/system/memory-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.memory-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.template-summarize':{'id':'routes/api.template-summarize','parentId':'root','path':'api/template-summarize','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.template-summarize-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.models.$provider':{'id':'routes/api.models.$provider','parentId':'routes/api.models','path':':provider','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.models._provider-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.sketchfab-search':{'id':'routes/api.sketchfab-search','parentId':'root','path':'api/sketchfab-search','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.sketchfab-search-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.disk-info':{'id':'routes/api.system.disk-info','parentId':'root','path':'api/system/disk-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.disk-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.export-api-keys':{'id':'routes/api.export-api-keys','parentId':'root','path':'api/export-api-keys','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.export-api-keys-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.github-template':{'id':'routes/api.github-template','parentId':'root','path':'api/github-template','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.github-template-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.app-info':{'id':'routes/api.system.app-info','parentId':'root','path':'api/system/app-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.app-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.git-info':{'id':'routes/api.system.git-info','parentId':'root','path':'api/system/git-info','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.git-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.image-generate':{'id':'routes/api.image-generate','parentId':'root','path':'api/image-generate','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.image-generate-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.netlify-deploy':{'id':'routes/api.netlify-deploy','parentId':'root','path':'api/netlify-deploy','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.netlify-deploy-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.project-update':{'id':'routes/api.project-update','parentId':'root','path':'api/project-update','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.project-update-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.sketchfab-auto':{'id':'routes/api.sketchfab-auto','parentId':'root','path':'api/sketchfab-auto','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.sketchfab-auto-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.supabase.query':{'id':'routes/api.supabase.query','parentId':'routes/api.supabase','path':'query','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.supabase.query-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.check-env-key':{'id':'routes/api.check-env-key','parentId':'root','path':'api/check-env-key','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.check-env-key-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.vercel-deploy':{'id':'routes/api.vercel-deploy','parentId':'root','path':'api/vercel-deploy','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.vercel-deploy-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.auth.logout':{'id':'routes/api.auth.logout','parentId':'root','path':'api/auth/logout','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.auth.logout-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.git-proxy.$':{'id':'routes/api.git-proxy.$','parentId':'root','path':'api/git-proxy/*','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.git-proxy._-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.image-name':{'id':'routes/api.image-name','parentId':'root','path':'api/image-name','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.image-name-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.enhancer':{'id':'routes/api.enhancer','parentId':'root','path':'api/enhancer','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.enhancer-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.projects':{'id':'routes/api.projects','parentId':'root','path':'api/projects','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.projects-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.supabase':{'id':'routes/api.supabase','parentId':'root','path':'api/supabase','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.supabase-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.clients':{'id':'routes/api.clients','parentId':'root','path':'api/clients','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.clients-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.llmcall':{'id':'routes/api.llmcall','parentId':'root','path':'api/llmcall','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.llmcall-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.health':{'id':'routes/api.health','parentId':'root','path':'api/health','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.health-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.models':{'id':'routes/api.models','parentId':'root','path':'api/models','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.models-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.skills':{'id':'routes/api.skills','parentId':'root','path':'api/skills','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.skills-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.update':{'id':'routes/api.update','parentId':'root','path':'api/update','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.update-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.chat':{'id':'routes/api.chat','parentId':'root','path':'api/chat','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.chat-l0sNRNKZ.js','imports':[],'css':[]},'routes/chat.$id':{'id':'routes/chat.$id','parentId':'root','path':'chat/:id','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/chat._id-DFLXZRos.js','imports':['/assets/_index-fGTVN_jX.js','/assets/components-Dwsc2uka.js','/assets/client-only-DOmRX3_0.js','/assets/Header-BrxSbzC7.js'],'css':['/assets/Header-CI-kvXcR.css']},'routes/projects':{'id':'routes/projects','parentId':'root','path':'projects','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/projects-DviP_nW4.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/skills':{'id':'routes/skills','parentId':'root','path':'skills','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/skills-D_rCuti8.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/_index':{'id':'routes/_index','parentId':'root','path':undefined,'index':true,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/_index-fGTVN_jX.js','imports':['/assets/components-Dwsc2uka.js','/assets/client-only-DOmRX3_0.js','/assets/Header-BrxSbzC7.js'],'css':['/assets/Header-CI-kvXcR.css']},'routes/login':{'id':'routes/login','parentId':'root','path':'login','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/login-D3fMEbOY.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/git':{'id':'routes/git','parentId':'root','path':'git','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/git-DjJ7mM73.js','imports':['/assets/components-Dwsc2uka.js','/assets/client-only-DOmRX3_0.js','/assets/Header-BrxSbzC7.js'],'css':['/assets/Header-CI-kvXcR.css']}},'url':'/assets/manifest-67c2b3a6.js','version':'67c2b3a6'};
+const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes':{'root':{'id':'root','parentId':undefined,'path':'','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/root-Bf2DDZE1.js','imports':['/assets/components-Dwsc2uka.js','/assets/client-only-CR9khJId.js'],'css':['/assets/root-BGbzvQfm.css']},'routes/api.image-prompt-suggest':{'id':'routes/api.image-prompt-suggest','parentId':'root','path':'api/image-prompt-suggest','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.image-prompt-suggest-l0sNRNKZ.js','imports':[],'css':[]},'routes/webcontainer.connect.$id':{'id':'routes/webcontainer.connect.$id','parentId':'root','path':'webcontainer/connect/:id','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/webcontainer.connect._id-l0sNRNKZ.js','imports':[],'css':[]},'routes/webcontainer.preview.$id':{'id':'routes/webcontainer.preview.$id','parentId':'root','path':'webcontainer/preview/:id','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/webcontainer.preview._id-CFDPOoZw.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/api.system.process-info':{'id':'routes/api.system.process-info','parentId':'root','path':'api/system/process-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.process-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.sketchfab-download':{'id':'routes/api.sketchfab-download','parentId':'root','path':'api/sketchfab-download','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.sketchfab-download-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.supabase.variables':{'id':'routes/api.supabase.variables','parentId':'routes/api.supabase','path':'variables','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.supabase.variables-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.diagnostics':{'id':'routes/api.system.diagnostics','parentId':'root','path':'api/system/diagnostics','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.diagnostics-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.memory-info':{'id':'routes/api.system.memory-info','parentId':'root','path':'api/system/memory-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.memory-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.template-summarize':{'id':'routes/api.template-summarize','parentId':'root','path':'api/template-summarize','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.template-summarize-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.models.$provider':{'id':'routes/api.models.$provider','parentId':'routes/api.models','path':':provider','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.models._provider-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.sketchfab-search':{'id':'routes/api.sketchfab-search','parentId':'root','path':'api/sketchfab-search','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.sketchfab-search-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.disk-info':{'id':'routes/api.system.disk-info','parentId':'root','path':'api/system/disk-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.disk-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.export-api-keys':{'id':'routes/api.export-api-keys','parentId':'root','path':'api/export-api-keys','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.export-api-keys-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.github-template':{'id':'routes/api.github-template','parentId':'root','path':'api/github-template','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.github-template-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.app-info':{'id':'routes/api.system.app-info','parentId':'root','path':'api/system/app-info','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.app-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.system.git-info':{'id':'routes/api.system.git-info','parentId':'root','path':'api/system/git-info','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.system.git-info-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.image-generate':{'id':'routes/api.image-generate','parentId':'root','path':'api/image-generate','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.image-generate-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.netlify-deploy':{'id':'routes/api.netlify-deploy','parentId':'root','path':'api/netlify-deploy','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.netlify-deploy-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.project-update':{'id':'routes/api.project-update','parentId':'root','path':'api/project-update','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.project-update-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.sketchfab-auto':{'id':'routes/api.sketchfab-auto','parentId':'root','path':'api/sketchfab-auto','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.sketchfab-auto-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.supabase.query':{'id':'routes/api.supabase.query','parentId':'routes/api.supabase','path':'query','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.supabase.query-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.check-env-key':{'id':'routes/api.check-env-key','parentId':'root','path':'api/check-env-key','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.check-env-key-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.vercel-deploy':{'id':'routes/api.vercel-deploy','parentId':'root','path':'api/vercel-deploy','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.vercel-deploy-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.auth.logout':{'id':'routes/api.auth.logout','parentId':'root','path':'api/auth/logout','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.auth.logout-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.git-proxy.$':{'id':'routes/api.git-proxy.$','parentId':'root','path':'api/git-proxy/*','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.git-proxy._-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.image-name':{'id':'routes/api.image-name','parentId':'root','path':'api/image-name','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.image-name-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.chat-sync':{'id':'routes/api.chat-sync','parentId':'root','path':'api/chat-sync','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.chat-sync-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.enhancer':{'id':'routes/api.enhancer','parentId':'root','path':'api/enhancer','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.enhancer-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.projects':{'id':'routes/api.projects','parentId':'root','path':'api/projects','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.projects-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.supabase':{'id':'routes/api.supabase','parentId':'root','path':'api/supabase','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.supabase-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.clients':{'id':'routes/api.clients','parentId':'root','path':'api/clients','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.clients-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.llmcall':{'id':'routes/api.llmcall','parentId':'root','path':'api/llmcall','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.llmcall-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.health':{'id':'routes/api.health','parentId':'root','path':'api/health','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.health-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.models':{'id':'routes/api.models','parentId':'root','path':'api/models','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.models-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.skills':{'id':'routes/api.skills','parentId':'root','path':'api/skills','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.skills-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.update':{'id':'routes/api.update','parentId':'root','path':'api/update','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.update-l0sNRNKZ.js','imports':[],'css':[]},'routes/api.chat':{'id':'routes/api.chat','parentId':'root','path':'api/chat','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':false,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/api.chat-l0sNRNKZ.js','imports':[],'css':[]},'routes/chat.$id':{'id':'routes/chat.$id','parentId':'root','path':'chat/:id','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/chat._id-DhXNFilM.js','imports':['/assets/_index-CeokPBTX.js','/assets/components-Dwsc2uka.js','/assets/client-only-CR9khJId.js','/assets/Header-CP8hhopo.js'],'css':['/assets/Header-CI-kvXcR.css']},'routes/projects':{'id':'routes/projects','parentId':'root','path':'projects','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/projects-BAwqOi8S.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/skills':{'id':'routes/skills','parentId':'root','path':'skills','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/skills-D_rCuti8.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/_index':{'id':'routes/_index','parentId':'root','path':undefined,'index':true,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/_index-CeokPBTX.js','imports':['/assets/components-Dwsc2uka.js','/assets/client-only-CR9khJId.js','/assets/Header-CP8hhopo.js'],'css':['/assets/Header-CI-kvXcR.css']},'routes/login':{'id':'routes/login','parentId':'root','path':'login','index':undefined,'caseSensitive':undefined,'hasAction':true,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/login-D3fMEbOY.js','imports':['/assets/components-Dwsc2uka.js'],'css':[]},'routes/git':{'id':'routes/git','parentId':'root','path':'git','index':undefined,'caseSensitive':undefined,'hasAction':false,'hasLoader':true,'hasClientAction':false,'hasClientLoader':false,'hasErrorBoundary':false,'module':'/assets/git-BhvAqyMV.js','imports':['/assets/components-Dwsc2uka.js','/assets/client-only-CR9khJId.js','/assets/Header-CP8hhopo.js'],'css':['/assets/Header-CI-kvXcR.css']}},'url':'/assets/manifest-1ca83f9f.js','version':'1ca83f9f'};
 
 /**
        * `mode` is only relevant for the old Remix compiler but
@@ -20498,13 +20644,21 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           caseSensitive: undefined,
           module: route26
         },
+  "routes/api.chat-sync": {
+          id: "routes/api.chat-sync",
+          parentId: "root",
+          path: "api/chat-sync",
+          index: undefined,
+          caseSensitive: undefined,
+          module: route27
+        },
   "routes/api.enhancer": {
           id: "routes/api.enhancer",
           parentId: "root",
           path: "api/enhancer",
           index: undefined,
           caseSensitive: undefined,
-          module: route27
+          module: route28
         },
   "routes/api.projects": {
           id: "routes/api.projects",
@@ -20512,7 +20666,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/projects",
           index: undefined,
           caseSensitive: undefined,
-          module: route28
+          module: route29
         },
   "routes/api.supabase": {
           id: "routes/api.supabase",
@@ -20520,7 +20674,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/supabase",
           index: undefined,
           caseSensitive: undefined,
-          module: route29
+          module: route30
         },
   "routes/api.clients": {
           id: "routes/api.clients",
@@ -20528,7 +20682,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/clients",
           index: undefined,
           caseSensitive: undefined,
-          module: route30
+          module: route31
         },
   "routes/api.llmcall": {
           id: "routes/api.llmcall",
@@ -20536,7 +20690,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/llmcall",
           index: undefined,
           caseSensitive: undefined,
-          module: route31
+          module: route32
         },
   "routes/api.health": {
           id: "routes/api.health",
@@ -20544,7 +20698,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/health",
           index: undefined,
           caseSensitive: undefined,
-          module: route32
+          module: route33
         },
   "routes/api.models": {
           id: "routes/api.models",
@@ -20552,7 +20706,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/models",
           index: undefined,
           caseSensitive: undefined,
-          module: route33
+          module: route34
         },
   "routes/api.skills": {
           id: "routes/api.skills",
@@ -20560,7 +20714,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/skills",
           index: undefined,
           caseSensitive: undefined,
-          module: route34
+          module: route35
         },
   "routes/api.update": {
           id: "routes/api.update",
@@ -20568,7 +20722,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/update",
           index: undefined,
           caseSensitive: undefined,
-          module: route35
+          module: route36
         },
   "routes/api.chat": {
           id: "routes/api.chat",
@@ -20576,7 +20730,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "api/chat",
           index: undefined,
           caseSensitive: undefined,
-          module: route36
+          module: route37
         },
   "routes/chat.$id": {
           id: "routes/chat.$id",
@@ -20584,7 +20738,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "chat/:id",
           index: undefined,
           caseSensitive: undefined,
-          module: route37
+          module: route38
         },
   "routes/projects": {
           id: "routes/projects",
@@ -20592,7 +20746,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "projects",
           index: undefined,
           caseSensitive: undefined,
-          module: route38
+          module: route39
         },
   "routes/skills": {
           id: "routes/skills",
@@ -20600,7 +20754,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "skills",
           index: undefined,
           caseSensitive: undefined,
-          module: route39
+          module: route40
         },
   "routes/_index": {
           id: "routes/_index",
@@ -20608,7 +20762,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: undefined,
           index: true,
           caseSensitive: undefined,
-          module: route40
+          module: route41
         },
   "routes/login": {
           id: "routes/login",
@@ -20616,7 +20770,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "login",
           index: undefined,
           caseSensitive: undefined,
-          module: route41
+          module: route42
         },
   "routes/git": {
           id: "routes/git",
@@ -20624,7 +20778,7 @@ const serverManifest = {'entry':{'module':'/assets/entry.client-BRHsSCu_.js','im
           path: "git",
           index: undefined,
           caseSensitive: undefined,
-          module: route42
+          module: route43
         }
       };
 

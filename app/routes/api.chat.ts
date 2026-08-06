@@ -306,6 +306,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
                       cost: cost.totalCost,
                     },
                     chatId,
+                    env,
                   );
                   console.log('[chat-tracker] upsert SUCCESS for', trackingId);
                 } catch (err) {

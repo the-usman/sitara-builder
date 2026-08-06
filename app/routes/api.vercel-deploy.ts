@@ -68,7 +68,9 @@ interface DeployRequestBody {
 }
 
 // Existing action function for POST requests
-export async function action({ request }: ActionFunctionArgs) {
+export async function action({ request, context }: ActionFunctionArgs) {
+  const env = (context as any).cloudflare?.env;
+
   try {
     const { projectId, files, token, chatId } = (await request.json()) as DeployRequestBody & { token: string };
 
@@ -236,7 +238,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const finalUrl = projectInfo.url || deploymentUrl;
 
     if (chatId && finalUrl) {
-      updateProjectUrl(chatId, 'vercelUrl', finalUrl).catch(console.error);
+      updateProjectUrl(chatId, 'vercelUrl', finalUrl, env).catch(console.error);
     }
 
     return json({

@@ -21,7 +21,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-
+/build
 /.history
 /.cache
 functions/build/
@@ -45,3 +45,4 @@ docs/instructions/Roadmap.md
 .cursorrules
 *.md
 .qodo
+build

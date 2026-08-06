@@ -15,10 +15,12 @@ import {
   createChatFromMessages,
   getSnapshot,
   setSnapshot,
+  getMessagesByTrackingId,
   type IChatMetadata,
 } from './db';
 import type { FileMap } from '~/lib/stores/files';
 import type { Snapshot } from './types';
+import { deriveTrackingId, pullChat, schedulePush } from './chat-sync.client';
 import { webcontainer } from '~/lib/webcontainer';
 import { detectProjectCommands, createCommandActionsString } from '~/utils/projectCommands';
 import type { ContextAnnotation } from '~/types/context';
@@ -67,7 +69,62 @@ export function useChatHistory() {
         getMessages(db, mixedId),
         getSnapshot(db, mixedId), // Fetch snapshot from DB
       ])
-        .then(async ([storedMessages, snapshot]) => {
+        .then(async ([localMessages, localSnapshot]) => {
+          let storedMessages = localMessages;
+          let snapshot = localSnapshot;
+
+          /*
+           * `getMessages` only matches on id and urlId. The projects list links by tracking
+           * ID (the first user message ID), so resolve that against local chats before
+           * assuming the chat is missing — otherwise a chat sitting in this very browser
+           * looks unopenable.
+           */
+          if (!storedMessages || storedMessages.messages.length === 0) {
+            const localByTracking = await getMessagesByTrackingId(db, mixedId);
+
+            if (localByTracking) {
+              storedMessages = localByTracking;
+              snapshot = await getSnapshot(db, localByTracking.id);
+            }
+          }
+
+          /*
+           * Still nothing local: this is most likely a different device than the one the chat
+           * was built on. Pull the server copy and write it into IndexedDB so every later load
+           * — and the rest of this function — can treat it as an ordinary local chat.
+           */
+          if (!storedMessages || storedMessages.messages.length === 0) {
+            const remote = await pullChat(mixedId);
+
+            if (remote) {
+              const localId = remote.urlId || remote.trackingId;
+
+              await setMessages(
+                db,
+                localId,
+                remote.messages,
+                remote.urlId,
+                remote.description,
+                undefined,
+                remote.metadata,
+              );
+
+              if (remote.snapshot) {
+                await setSnapshot(db, localId, remote.snapshot);
+              }
+
+              storedMessages = {
+                id: localId,
+                urlId: remote.urlId,
+                description: remote.description,
+                messages: remote.messages,
+                timestamp: remote.updatedAt,
+                metadata: remote.metadata,
+              };
+              snapshot = remote.snapshot;
+            }
+          }
+
           if (storedMessages && storedMessages.messages.length > 0) {
             /*
              * const snapshotStr = localStorage.getItem(`snapshot:${mixedId}`); // Remove localStorage usage
@@ -180,6 +237,12 @@ ${value.content}
             chatId.set(storedMessages.id);
             chatMetadata.set(storedMessages.metadata);
           } else {
+            /*
+             * No chat matched this id — surface it instead of silently bouncing to "/",
+             * which reads as the app randomly navigating away on its own.
+             */
+            logStore.logError('Chat not found', new Error(`No chat stored for id "${mixedId}"`));
+            toast.error(`Chat "${mixedId}" was not found on this device or in your synced history`);
             navigate('/', { replace: true });
           }
 
@@ -198,11 +261,16 @@ ${value.content}
   }, [mixedId, db, navigate, searchParams]); // Added db, navigate, searchParams dependencies
 
   const takeSnapshot = useCallback(
-    async (chatIdx: string, files: FileMap, _chatId?: string | undefined, chatSummary?: string) => {
+    async (
+      chatIdx: string,
+      files: FileMap,
+      _chatId?: string | undefined,
+      chatSummary?: string,
+    ): Promise<Snapshot | undefined> => {
       const id = _chatId || chatId.get();
 
       if (!id || !db) {
-        return;
+        return undefined;
       }
 
       const snapshot: Snapshot = {
@@ -217,7 +285,12 @@ ${value.content}
       } catch (error) {
         console.error('Failed to save snapshot:', error);
         toast.error('Failed to save chat snapshot.');
+
+        return undefined;
       }
+
+      // Handed back so the caller can ship it to the server alongside the messages.
+      return snapshot;
     },
     [db],
   );
@@ -305,7 +378,12 @@ ${value.content}
         }
       }
 
-      takeSnapshot(messages[messages.length - 1].id, workbenchStore.files.get(), _urlId, chatSummary);
+      const snapshot = await takeSnapshot(
+        messages[messages.length - 1].id,
+        workbenchStore.files.get(),
+        _urlId,
+        chatSummary,
+      );
 
       if (!description.get() && firstArtifact?.title) {
         description.set(firstArtifact?.title);
@@ -332,15 +410,36 @@ ${value.content}
         return;
       }
 
+      const allMessages = [...archivedMessages, ...messages];
+
       await setMessages(
         db,
         finalChatId, // Use the potentially updated chatId
-        [...archivedMessages, ...messages],
+        allMessages,
         urlId,
         description.get(),
         undefined,
         chatMetadata.get(),
       );
+
+      /*
+       * Mirror to the server so this chat is reachable from other devices. Keyed on the
+       * first user message ID, which is stable across devices — unlike finalChatId, which
+       * is an IndexedDB sequence and collides between browsers. Debounced and fire-and-
+       * forget: the local write above already succeeded and must not depend on the network.
+       */
+      const trackingId = deriveTrackingId(allMessages);
+
+      if (trackingId) {
+        schedulePush({
+          trackingId,
+          urlId: _urlId ?? urlId,
+          description: description.get(),
+          messages: allMessages,
+          metadata: chatMetadata.get(),
+          snapshot,
+        });
+      }
     },
     duplicateCurrentChat: async (listItemId: string) => {
       if (!db || (!mixedId && !listItemId)) {

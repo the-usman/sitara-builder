@@ -1,14 +1,6 @@
-import dns from 'dns';
-import { MongoClient, type Collection } from 'mongodb';
+import { type Collection } from 'mongodb';
+import { withMongo, type ServerEnv } from '~/lib/mongo.server';
 
-// Cloudflare Workers handles SRV natively. Only fix DNS in local Node.js dev.
-if (typeof navigator === 'undefined' || navigator.userAgent !== 'Cloudflare-Workers') {
-  try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch {}
-}
-
-const MONGODB_URI =
-  process.env.MONGODB_URI || 'mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/';
-const DB_NAME = 'project_db_client';
 const COLLECTION = 'web_builders';
 
 export interface ChatModelUsage {
@@ -24,16 +16,16 @@ export interface ChatModelUsage {
 }
 
 export interface ChatClient {
-  _id: string;        // ObjectId from the clients collection
+  _id: string; // ObjectId from the clients collection
   clientName: string;
   productName: string;
 }
 
 export interface ChatRecord {
-  trackingId: string;     // first user message ID — stable across the whole chat
-  clientChatId?: string;  // IndexedDB sequential ID — set after first message is stored
+  trackingId: string; // first user message ID — stable across the whole chat
+  clientChatId?: string; // IndexedDB sequential ID — set after first message is stored
   name: string;
-  client: ChatClient;     // the client this chat is being built for
+  client: ChatClient; // the client this chat is being built for
   createdBy: {
     userId: string;
     email: string;
@@ -53,11 +45,8 @@ export interface ChatRecord {
 // Keep legacy alias used by deploy routes
 export type ProjectDoc = ChatRecord;
 
-async function getCollection(): Promise<{ collection: Collection<ChatRecord>; client: MongoClient }> {
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
-  const collection = client.db(DB_NAME).collection<ChatRecord>(COLLECTION);
-  return { collection, client };
+function withChats<T>(env: ServerEnv, fn: (collection: Collection<ChatRecord>) => Promise<T>): Promise<T> {
+  return withMongo(env, (db) => fn(db.collection<ChatRecord>(COLLECTION)));
 }
 
 export async function upsertChat(
@@ -68,12 +57,11 @@ export async function upsertChat(
   modelKey: string,
   modelUsage: ChatModelUsage,
   clientChatId?: string,
+  env?: ServerEnv,
 ): Promise<void> {
-  const { collection, client } = await getCollection();
-
-  try {
+  await withChats(env, async (collection) => {
     const now = new Date();
-    await collection.updateOne(
+    return collection.updateOne(
       { trackingId },
       {
         $set: {
@@ -102,9 +90,7 @@ export async function upsertChat(
       },
       { upsert: true },
     );
-  } finally {
-    await client.close();
-  }
+  });
 }
 
 // Used by Netlify/Vercel/GitHub URL updates — looks up by clientChatId
@@ -112,28 +98,18 @@ export async function updateChatUrl(
   clientChatId: string,
   field: 'githubUrl' | 'netlifyUrl' | 'vercelUrl',
   url: string,
+  env?: ServerEnv,
 ): Promise<void> {
-  const { collection, client } = await getCollection();
-
-  try {
-    await collection.updateOne(
-      { clientChatId },
-      { $set: { [field]: url, updatedAt: new Date() } },
-    );
-  } finally {
-    await client.close();
-  }
+  await withChats(env, (collection) =>
+    collection.updateOne({ clientChatId }, { $set: { [field]: url, updatedAt: new Date() } }),
+  );
 }
 
-export async function getChats(userId: string, role: string): Promise<ChatRecord[]> {
-  const { collection, client } = await getCollection();
-
-  try {
+export async function getChats(userId: string, role: string, env?: ServerEnv): Promise<ChatRecord[]> {
+  return withChats(env, (collection) => {
     const filter = role === 'super_admin' ? {} : { 'createdBy.userId': userId };
-    return await collection.find(filter).sort({ updatedAt: -1 }).toArray();
-  } finally {
-    await client.close();
-  }
+    return collection.find(filter).sort({ updatedAt: -1 }).toArray();
+  });
 }
 
 // Legacy alias

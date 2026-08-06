@@ -3,6 +3,7 @@ import type { ModelInfo } from '~/lib/modules/llm/types';
 import type { LanguageModelV1 } from 'ai';
 import type { IProviderSetting } from '~/types/model';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { withSupportedSamplingParams } from '~/lib/modules/llm/sampling-params';
 
 export default class AnthropicProvider extends BaseProvider {
   name = 'Anthropic';
@@ -97,6 +98,6 @@ export default class AnthropicProvider extends BaseProvider {
       apiKey,
     });
 
-    return anthropic(model);
+    return withSupportedSamplingParams(anthropic(model));
   };
 }

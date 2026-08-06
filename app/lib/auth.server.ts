@@ -1,13 +1,7 @@
-import dns from 'dns';
-import { MongoClient } from 'mongodb';
 import { SignJWT, jwtVerify } from 'jose';
 import { redirect } from '@remix-run/cloudflare';
 import { randomBytes, scrypt, timingSafeEqual } from 'crypto';
-
-// Cloudflare Workers handles SRV natively. Only fix DNS in local Node.js dev.
-if (typeof navigator === 'undefined' || navigator.userAgent !== 'Cloudflare-Workers') {
-  try { dns.setServers(['8.8.8.8', '1.1.1.1']); } catch {}
-}
+import { requireServerSecret, withMongo, type ServerEnv } from '~/lib/mongo.server';
 
 function scryptAsync(password: string | Buffer, salt: Buffer, keylen: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -27,9 +21,6 @@ export async function hashPassword(password: string): Promise<string> {
   return `scrypt:${salt.toString('base64')}:${derived.toString('base64')}`;
 }
 
-const MONGODB_URI =
-  process.env.MONGODB_URI || 'mongodb+srv://the-usman:Usm123000@cluster0.gqzyjmn.mongodb.net/';
-const DB_NAME = 'project_db_client';
 const COLLECTION = 'users';
 const AUTH_COOKIE = 'auth_token';
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
@@ -52,23 +43,13 @@ export interface AuthUser {
   automations?: string[];
 }
 
-function getJwtSecret(env?: any): Uint8Array {
-  const secret =
-    env?.JWT_SECRET || process.env.JWT_SECRET || 'sitara-builder-jwt-secret-change-in-production';
-  return new TextEncoder().encode(secret);
+function getJwtSecret(env?: ServerEnv): Uint8Array {
+  // No literal fallback: a shared default secret would let anyone forge a session cookie.
+  return new TextEncoder().encode(requireServerSecret('JWT_SECRET', env));
 }
 
-export async function findUserByEmail(email: string): Promise<UserDoc | null> {
-  const client = new MongoClient(MONGODB_URI);
-  try {
-    await client.connect();
-    return await client
-      .db(DB_NAME)
-      .collection<UserDoc>(COLLECTION)
-      .findOne({ email: email.toLowerCase().trim() });
-  } finally {
-    await client.close();
-  }
+export async function findUserByEmail(email: string, env?: ServerEnv): Promise<UserDoc | null> {
+  return withMongo(env, (db) => db.collection<UserDoc>(COLLECTION).findOne({ email: email.toLowerCase().trim() }));
 }
 
 export function checkAccess(user: { role: string; active: boolean; automations?: string[] }): {
@@ -116,7 +97,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   }
 }
 
-export async function signJwt(payload: AuthUser, env?: any): Promise<string> {
+export async function signJwt(payload: AuthUser, env?: ServerEnv): Promise<string> {
   const secret = getJwtSecret(env);
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
@@ -125,9 +106,12 @@ export async function signJwt(payload: AuthUser, env?: any): Promise<string> {
     .sign(secret);
 }
 
-export async function verifyJwt(token: string, env?: any): Promise<AuthUser | null> {
+export async function verifyJwt(token: string, env?: ServerEnv): Promise<AuthUser | null> {
+  // Resolved outside the try so a misconfigured JWT_SECRET surfaces as a real error
+  // rather than being swallowed into an endless redirect back to /login.
+  const secret = getJwtSecret(env);
+
   try {
-    const secret = getJwtSecret(env);
     const { payload } = await jwtVerify(token, secret);
     return payload as unknown as AuthUser;
   } catch {
@@ -149,7 +133,7 @@ export function clearAuthCookie(): string {
   return `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
 }
 
-export async function requireAuth(request: Request, env?: any): Promise<AuthUser> {
+export async function requireAuth(request: Request, env?: ServerEnv): Promise<AuthUser> {
   const token = getAuthToken(request);
   if (!token) throw redirect('/login');
   const user = await verifyJwt(token, env);

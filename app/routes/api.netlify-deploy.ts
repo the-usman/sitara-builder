@@ -17,7 +17,9 @@ async function sha1(message: string) {
   return hashHex;
 }
 
-export async function action({ request }: ActionFunctionArgs) {
+export async function action({ request, context }: ActionFunctionArgs) {
+  const env = (context as any).cloudflare?.env;
+
   try {
     const { siteId, files, token, chatId } = (await request.json()) as DeployRequestBody & { token: string };
 
@@ -201,7 +203,7 @@ export async function action({ request }: ActionFunctionArgs) {
           const deployUrl = status.ssl_url || status.url;
 
           if (chatId && deployUrl) {
-            updateProjectUrl(chatId, 'netlifyUrl', deployUrl).catch(console.error);
+            updateProjectUrl(chatId, 'netlifyUrl', deployUrl, env).catch(console.error);
           }
 
           return json({

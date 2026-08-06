@@ -3,7 +3,8 @@ import { requireAuth } from '~/lib/auth.server';
 import { updateProjectUrl } from '~/lib/project-tracker.server';
 
 export async function action({ request, context }: ActionFunctionArgs) {
-  await requireAuth(request, (context as any).cloudflare?.env);
+  const env = (context as any).cloudflare?.env;
+  await requireAuth(request, env);
 
   const { chatId, field, url } = (await request.json()) as {
     chatId: string;
@@ -15,6 +16,6 @@ export async function action({ request, context }: ActionFunctionArgs) {
     return json({ error: 'chatId, field, and url are required' }, { status: 400 });
   }
 
-  await updateProjectUrl(chatId, field, url);
+  await updateProjectUrl(chatId, field, url, env);
   return json({ success: true });
 }

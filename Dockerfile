@@ -57,6 +57,15 @@ RUN mkdir -p /root/.config/.wrangler && \
 
 RUN pnpm run build
 
+# bindings.sh is invoked as ./bindings.sh by `dockerstart`. A checkout from Windows loses
+# the executable bit, and CRLF line endings make the shebang unusable — normalise both here,
+# otherwise the container starts and immediately dies.
+RUN sed -i 's/\r$//' bindings.sh && chmod +x bindings.sh
+
+# Dokploy and `docker ps` read this to decide whether the container came up healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:5173/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 CMD [ "pnpm", "run", "dockerstart"]
 
 # Development image

@@ -13,9 +13,10 @@ import {
 import { promptSkills } from '~/lib/common/prompts/skills';
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
-  await requireAuth(request, (context as any).cloudflare?.env);
+  const env = (context as any).cloudflare?.env;
+  await requireAuth(request, env);
 
-  return json({ skills: await listCustomSkills() });
+  return json({ skills: await listCustomSkills(env) });
 }
 
 interface SkillActionBody {
@@ -31,7 +32,8 @@ interface SkillActionBody {
 }
 
 export async function action({ request, context }: ActionFunctionArgs) {
-  const user = await requireAuth(request, (context as any).cloudflare?.env);
+  const env = (context as any).cloudflare?.env;
+  const user = await requireAuth(request, env);
 
   if (user.role !== 'super_admin') {
     return json({ error: 'Only a super admin can manage skills.' }, { status: 403 });
@@ -49,7 +51,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
         }
 
         const parsed = await importSkillFromGit(body.url);
-        const skill = await saveCustomSkill(parsed, { type: 'git', ref: body.url }, createdBy, importOptions);
+        const skill = await saveCustomSkill(parsed, { type: 'git', ref: body.url }, createdBy, importOptions, env);
 
         return json({ success: true, skill: { name: skill.name, description: skill.description } });
       }
@@ -59,7 +61,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
         }
 
         const parsed = parseSkillMd(body.content, body.filename);
-        const skill = await saveCustomSkill(parsed, { type: 'md', ref: body.filename }, createdBy, importOptions);
+        const skill = await saveCustomSkill(parsed, { type: 'md', ref: body.filename }, createdBy, importOptions, env);
 
         return json({ success: true, skill: { name: skill.name, description: skill.description } });
       }
@@ -69,7 +71,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
         }
 
         const parsed = await importSkillFromZip(body.dataBase64, body.filename);
-        const skill = await saveCustomSkill(parsed, { type: 'zip', ref: body.filename }, createdBy, importOptions);
+        const skill = await saveCustomSkill(parsed, { type: 'zip', ref: body.filename }, createdBy, importOptions, env);
 
         return json({ success: true, skill: { name: skill.name, description: skill.description } });
       }
@@ -78,7 +80,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
           return json({ error: 'name and enabled are required' }, { status: 400 });
         }
 
-        await setCustomSkillEnabled(body.name, body.enabled);
+        await setCustomSkillEnabled(body.name, body.enabled, env);
 
         return json({ success: true });
       }
@@ -91,7 +93,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
           return json({ error: `Unknown built-in skill: ${body.name}` }, { status: 400 });
         }
 
-        await setBuiltinSkillEnabled(body.name, body.enabled);
+        await setBuiltinSkillEnabled(body.name, body.enabled, env);
 
         return json({ success: true });
       }
@@ -100,7 +102,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
           return json({ error: 'name is required' }, { status: 400 });
         }
 
-        await deleteCustomSkill(body.name);
+        await deleteCustomSkill(body.name, env);
 
         return json({ success: true });
       }

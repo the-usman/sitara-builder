@@ -4,8 +4,10 @@ import { requireAuth } from '~/lib/auth.server';
 import { getChats, type ChatRecord } from '~/lib/project-tracker.server';
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
-  const user = await requireAuth(request, (context as any).cloudflare?.env);
-  const chats = await getChats(user.userId, user.role);
+  const env = (context as any).cloudflare?.env;
+  const user = await requireAuth(request, env);
+  const chats = await getChats(user.userId, user.role, env);
+
   return json({ chats, role: user.role });
 }
 
@@ -118,8 +120,15 @@ export default function ChatsPage() {
                     }`}
                   >
                     <td className="px-4 py-3">
+                      {/*
+                       * Prefer clientChatId (the IndexedDB chat ID), but fall back to
+                       * trackingId — clientChatId is often never recorded, because a new
+                       * chat has no IndexedDB row until after its first response. The chat
+                       * route resolves a trackingId against local chats first, then against
+                       * synced history, so this link works on any device.
+                       */}
                       <a
-                        href={`/chat/${c.trackingId}`}
+                        href={`/chat/${c.clientChatId || c.trackingId}`}
                         className="font-medium text-white hover:text-purple-300 transition-colors"
                       >
                         {c.name || c.trackingId}
@@ -128,9 +137,7 @@ export default function ChatsPage() {
                     <td className="px-4 py-3">
                       <div className="text-gray-300">{c.client?.clientName}</div>
                       <div className="text-gray-500 text-xs">{c.client?.productName}</div>
-                      {c.createdBy?.name && (
-                        <div className="text-gray-700 text-xs mt-0.5">by {c.createdBy.name}</div>
-                      )}
+                      {c.createdBy?.name && <div className="text-gray-700 text-xs mt-0.5">by {c.createdBy.name}</div>}
                     </td>
                     <td className="px-4 py-3">
                       <ModelBadges models={c.models} />
