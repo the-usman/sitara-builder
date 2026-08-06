@@ -70,6 +70,26 @@ services:
     networks:
       - dokploy-network
 
+  # Cloudflare Tunnel — gives the app a real HTTPS origin without owning a domain and
+  # without Let's Encrypt. This matters beyond convenience: WebContainer needs
+  # SharedArrayBuffer, which browsers only expose in a secure context, so the bolt shell
+  # cannot start over plain HTTP. The tunnel dials out to Cloudflare, so it also sidesteps
+  # inbound routing entirely — no Traefik, no open ports, no cert to renew.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+
+    # With a token: a named tunnel on a stable hostname (needs a domain on Cloudflare).
+    # Without one: a quick tunnel that prints a random *.trycloudflare.com URL to its logs.
+    command: >
+      tunnel --no-autoupdate
+      ${CLOUDFLARE_TUNNEL_TOKEN:+run --token ${CLOUDFLARE_TUNNEL_TOKEN}}
+      ${CLOUDFLARE_TUNNEL_TOKEN:---url http://app:5173}
+    networks:
+      - dokploy-network
+
 networks:
   dokploy-network:
     external: true

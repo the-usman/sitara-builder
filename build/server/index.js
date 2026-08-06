@@ -7887,11 +7887,11 @@ var define_PKG_OPTIONAL_DEPENDENCIES_default = {};
 var define_PKG_PEER_DEPENDENCIES_default = {};
 const getGitInfo = () => {
   return {
-    commitHash: "857cbf2",
+    commitHash: "4fa0e23",
     branch: "stable",
-    commitTime: "Tue Jun 16 07:32:48 2026 +0500",
+    commitTime: "Thu Aug 6 18:47:16 2026 +0500",
     author: "usman",
-    email: "theusman620@gmail.com",
+    email: "usman@remap.ai",
     remoteUrl: "https://github.com/the-usman/sitara-builder.git",
     repoName: "the-usman/sitara-builder"
   };
@@ -8180,11 +8180,11 @@ const loader$f = async ({ request, context }) => {
   }
   const gitInfo = {
     local: {
-      commitHash: "857cbf2" ,
+      commitHash: "4fa0e23" ,
       branch: "stable" ,
-      commitTime: "Tue Jun 16 07:32:48 2026 +0500" ,
+      commitTime: "Thu Aug 6 18:47:16 2026 +0500" ,
       author: "usman" ,
-      email: "theusman620@gmail.com" ,
+      email: "usman@remap.ai" ,
       remoteUrl: "https://github.com/the-usman/sitara-builder.git" ,
       repoName: "the-usman/sitara-builder" 
     },
@@ -9770,12 +9770,9 @@ const route32 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   action: action$4
 }, Symbol.toStringTag, { value: 'Module' }));
 
-const loader$7 = async ({ request: _request }) => {
-  return json({
-    status: "healthy",
-    timestamp: (/* @__PURE__ */ new Date()).toISOString()
-  });
-};
+function loader$7() {
+  return json({ status: "ok", timestamp: (/* @__PURE__ */ new Date()).toISOString() });
+}
 
 const route33 = /*#__PURE__*/Object.freeze(/*#__PURE__*/Object.defineProperty({
   __proto__: null,
@@ -20258,8 +20255,9 @@ async function action({ request, context }) {
   }
   let user;
   try {
-    user = await findUserByEmail(email);
-  } catch {
+    user = await findUserByEmail(email, env);
+  } catch (error) {
+    console.error("[login] findUserByEmail failed:", error);
     return json({ error: "Unable to connect to database. Please try again." }, { status: 503 });
   }
   if (!user) {
@@ -20358,14 +20356,7 @@ function LoginPage() {
           children: isSubmitting ? /* @__PURE__ */ jsxs("span", { className: "inline-flex items-center justify-center gap-2", children: [
             /* @__PURE__ */ jsxs("svg", { className: "animate-spin w-4 h-4", fill: "none", viewBox: "0 0 24 24", children: [
               /* @__PURE__ */ jsx("circle", { className: "opacity-25", cx: "12", cy: "12", r: "10", stroke: "currentColor", strokeWidth: "4" }),
-              /* @__PURE__ */ jsx(
-                "path",
-                {
-                  className: "opacity-75",
-                  fill: "currentColor",
-                  d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                }
-              )
+              /* @__PURE__ */ jsx("path", { className: "opacity-75", fill: "currentColor", d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" })
             ] }),
             "Signing in…"
           ] }) : "Sign in"
