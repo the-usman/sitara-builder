@@ -1,7 +1,12 @@
 import { json } from '@remix-run/cloudflare';
 import JSZip from 'jszip';
+import { requireAuth } from '~/lib/auth.server';
+import { getProviderToken } from '~/lib/config/provider-tokens.server';
 
 export async function loader({ request, context }: { request: Request; context: any }) {
+  const env = context?.cloudflare?.env;
+  await requireAuth(request, env);
+
   const url = new URL(request.url);
   const repo = url.searchParams.get('repo');
 
@@ -9,11 +14,12 @@ export async function loader({ request, context }: { request: Request; context: 
     return json({ error: 'Repository name is required' }, { status: 400 });
   }
 
-  const githubToken =
-    context?.cloudflare?.env?.GITHUB_TOKEN ||
-    context?.cloudflare?.env?.VITE_GITHUB_ACCESS_TOKEN ||
-    process.env.GITHUB_TOKEN ||
-    process.env.VITE_GITHUB_ACCESS_TOKEN;
+  /*
+   * Prefers the super-admin-managed token, falling back to the deployment env
+   * vars this route used to read directly. Still optional — public template
+   * repos resolve fine unauthenticated, they just get a lower rate limit.
+   */
+  const githubToken = await getProviderToken('github', env);
 
   try {
     const baseUrl = 'https://api.github.com';

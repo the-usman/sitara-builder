@@ -1,14 +1,23 @@
 import { json, type ActionFunction } from '@remix-run/cloudflare';
 import type { SupabaseProject } from '~/types/supabase';
+import { requireAuth } from '~/lib/auth.server';
+import { requireProviderToken } from '~/lib/config/provider-tokens.server';
 
-export const action: ActionFunction = async ({ request }) => {
+export const action: ActionFunction = async ({ request, context }) => {
   if (request.method !== 'POST') {
     return json({ error: 'Method not allowed' }, { status: 405 });
   }
 
-  try {
-    const { token } = (await request.json()) as any;
+  const env = (context as any)?.cloudflare?.env;
+  await requireAuth(request, env);
 
+  /*
+   * The token comes from the super-admin-managed config, never from the request
+   * body — otherwise any operator could list projects under their own account.
+   */
+  const token = await requireProviderToken('supabase', env);
+
+  try {
     const projectsResponse = await fetch('https://api.supabase.com/v1/projects', {
       headers: {
         Authorization: `Bearer ${token}`,

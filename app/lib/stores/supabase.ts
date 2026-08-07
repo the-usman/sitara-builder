@@ -1,5 +1,6 @@
 import { atom } from 'nanostores';
 import type { SupabaseUser, SupabaseStats, SupabaseApiKey, SupabaseCredentials } from '~/types/supabase';
+import { syncProviderConfig } from '~/lib/config/sync-config.client';
 
 export interface SupabaseProject {
   id: string;
@@ -93,6 +94,22 @@ export function updateSupabaseConnection(connection: Partial<SupabaseConnectionS
 
   const newState = { ...currentState, ...connection };
   supabaseConnection.set(newState);
+
+  /*
+   * localStorage below is UI state only — the server reads the token and the
+   * selected project from the shared config, so credential-bearing changes have
+   * to be pushed there as well. Rejected for anyone who is not a super admin.
+   */
+  if (connection.token !== undefined || connection.selectedProjectId !== undefined || connection.credentials) {
+    syncProviderConfig({
+      supabase: {
+        token: connection.token,
+        selectedProjectId: newState.selectedProjectId,
+        projectLabel: newState.project?.name,
+        credentials: newState.credentials,
+      },
+    });
+  }
 
   /*
    * Always save the connection state to localStorage to persist across chats

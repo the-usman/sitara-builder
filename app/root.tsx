@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react';
-import type { LinksFunction } from '@remix-run/cloudflare';
+import { json, type LinksFunction, type LoaderFunctionArgs } from '@remix-run/cloudflare';
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from '@remix-run/react';
+import { getAuthToken, verifyJwt } from './lib/auth.server';
 import tailwindReset from '@unocss/reset/tailwind-compat.css?url';
 import { themeStore } from './lib/stores/theme';
 import { stripIndents } from './utils/stripIndent';
@@ -64,6 +65,31 @@ export const Head = createHead(() => (
     <script dangerouslySetInnerHTML={{ __html: inlineThemeCode }} />
   </>
 ));
+
+/**
+ * Publishes the signed-in user's identity to the client so the settings UI can
+ * decide between editable and read-only rendering.
+ *
+ * Deliberately does not call `requireAuth`: the root route also renders
+ * `/login`, so redirecting unauthenticated visitors here would loop. Pages that
+ * need a session enforce it in their own loader, and every privileged API route
+ * re-checks the role server-side — this value is a UI hint, not a gate.
+ */
+export async function loader({ request, context }: LoaderFunctionArgs) {
+  const token = getAuthToken(request);
+
+  if (!token) {
+    return json({ user: null });
+  }
+
+  const user = await verifyJwt(token, (context as any)?.cloudflare?.env);
+
+  if (!user) {
+    return json({ user: null });
+  }
+
+  return json({ user: { email: user.email, name: user.name, role: user.role } });
+}
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const theme = useStore(themeStore);

@@ -1,14 +1,29 @@
 import { json, type ActionFunctionArgs } from '@remix-run/cloudflare';
+import { requireAuth } from '~/lib/auth.server';
+import { getSupabaseTarget } from '~/lib/config/provider-tokens.server';
 
-export async function action({ request }: ActionFunctionArgs) {
+export async function action({ request, context }: ActionFunctionArgs) {
+  const env = (context as any)?.cloudflare?.env;
+  await requireAuth(request, env);
+
   try {
-    // Add proper type assertion for the request body
-    const body = (await request.json()) as { projectId?: string; token?: string };
-    const { projectId, token } = body;
+    // Only the project id is honoured from the client; the token is server-held.
+    const body = (await request.json()) as { projectId?: string };
+    const target = await getSupabaseTarget(env);
+    const projectId = body.projectId || target.projectId;
 
-    if (!projectId || !token) {
-      return json({ error: 'Project ID and token are required' }, { status: 400 });
+    if (!target.token) {
+      return json(
+        { error: 'No Supabase credentials are configured. Ask a super admin to set them up.' },
+        { status: 409 },
+      );
     }
+
+    if (!projectId) {
+      return json({ error: 'No Supabase project has been selected by a super admin.' }, { status: 409 });
+    }
+
+    const token = target.token;
 
     const response = await fetch(`https://api.supabase.com/v1/projects/${projectId}/api-keys`, {
       method: 'GET',

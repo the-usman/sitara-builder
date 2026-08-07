@@ -12,6 +12,7 @@ import { WORK_DIR } from '~/utils/constants';
 import { createSummary } from '~/lib/.server/llm/create-summary';
 import { extractPropertiesFromMessage } from '~/lib/.server/llm/utils';
 import { getAuthToken, verifyJwt } from '~/lib/auth.server';
+import { readAppConfig } from '~/lib/config/app-config.server';
 import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
 import { computeCost } from '~/lib/.server/llm/model-pricing';
 import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
@@ -61,10 +62,18 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
     }>();
 
   const cookieHeader = request.headers.get('Cookie');
-  const apiKeys = JSON.parse(parseCookies(cookieHeader || '').apiKeys || '{}');
 
   const env = (context as any).cloudflare?.env;
   const authUser = await verifyJwt(getAuthToken(request) || '', env);
+
+  /*
+   * LLM keys come from the super-admin-managed config only. The `apiKeys`
+   * cookie is deliberately no longer read: it is client-writable, so honouring
+   * it would let any operator swap in their own key and bypass the shared
+   * configuration. Providers with no stored key still fall back to the server
+   * environment variables resolved inside LLMManager.
+   */
+  const { apiKeys } = await readAppConfig(env);
 
   /*
    * Stable tracking ID: first user message ID is always present and consistent across all

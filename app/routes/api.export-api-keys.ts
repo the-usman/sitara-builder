@@ -1,20 +1,28 @@
 import type { LoaderFunction } from '@remix-run/cloudflare';
 import { LLMManager } from '~/lib/modules/llm/manager';
-import { getApiKeysFromCookie } from '~/lib/api/cookies';
+import { requireSuperAdmin } from '~/lib/auth.server';
+import { readAppConfig } from '~/lib/config/app-config.server';
 
+/**
+ * Returns provider API keys in plaintext, so it is restricted to super admins.
+ * It previously ran with no authentication at all, which was harmless only
+ * while keys lived in the caller's own cookie — now that they are centrally
+ * managed, an open endpoint here would hand them to any visitor.
+ */
 export const loader: LoaderFunction = async ({ context, request }) => {
-  // Get API keys from cookie
-  const cookieHeader = request.headers.get('Cookie');
-  const apiKeysFromCookie = getApiKeysFromCookie(cookieHeader);
+  const env = context?.cloudflare?.env as any;
+  await requireSuperAdmin(request, env);
+
+  const { apiKeys: apiKeysFromConfig } = await readAppConfig(env);
 
   // Initialize the LLM manager to access environment variables
-  const llmManager = LLMManager.getInstance(context?.cloudflare?.env as any);
+  const llmManager = LLMManager.getInstance(env);
 
   // Get all provider instances to find their API token keys
   const providers = llmManager.getAllProviders();
 
   // Create a comprehensive API keys object
-  const apiKeys: Record<string, string> = { ...apiKeysFromCookie };
+  const apiKeys: Record<string, string> = { ...apiKeysFromConfig };
 
   // For each provider, check all possible sources for API keys
   for (const provider of providers) {

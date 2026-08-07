@@ -1,16 +1,23 @@
 ﻿import { type ActionFunctionArgs, type LoaderFunctionArgs, json } from '@remix-run/cloudflare';
 import type { VercelProjectInfo } from '~/types/vercel';
 import { updateProjectUrl } from '~/lib/project-tracker.server';
+import { requireAuth } from '~/lib/auth.server';
+import { requireProviderToken } from '~/lib/config/provider-tokens.server';
 
 // Add loader function to handle GET requests
-export async function loader({ request }: LoaderFunctionArgs) {
+export async function loader({ request, context }: LoaderFunctionArgs) {
+  const env = (context as any)?.cloudflare?.env;
+  await requireAuth(request, env);
+
   const url = new URL(request.url);
   const projectId = url.searchParams.get('projectId');
-  const token = url.searchParams.get('token');
 
-  if (!projectId || !token) {
-    return json({ error: 'Missing projectId or token' }, { status: 400 });
+  if (!projectId) {
+    return json({ error: 'Missing projectId' }, { status: 400 });
   }
+
+  // Server-held credential: a `?token=` query parameter is no longer honoured.
+  const token = await requireProviderToken('vercel', env);
 
   try {
     // Get project info
@@ -70,13 +77,16 @@ interface DeployRequestBody {
 // Existing action function for POST requests
 export async function action({ request, context }: ActionFunctionArgs) {
   const env = (context as any).cloudflare?.env;
+  await requireAuth(request, env);
+
+  /*
+   * Deploys always run against the shared, super-admin-managed Vercel account.
+   * A `token` in the request body is ignored.
+   */
+  const token = await requireProviderToken('vercel', env);
 
   try {
-    const { projectId, files, token, chatId } = (await request.json()) as DeployRequestBody & { token: string };
-
-    if (!token) {
-      return json({ error: 'Not connected to Vercel' }, { status: 401 });
-    }
+    const { projectId, files, chatId } = (await request.json()) as DeployRequestBody;
 
     let targetProjectId = projectId;
     let projectInfo: VercelProjectInfo | undefined;

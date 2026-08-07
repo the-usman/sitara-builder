@@ -6,6 +6,7 @@ import { classNames } from '~/utils/classNames';
 import Cookies from 'js-cookie';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '~/components/ui/Collapsible';
 import { Button } from '~/components/ui/Button';
+import { syncProviderConfig } from '~/lib/config/sync-config.client';
 
 interface GitHubUserResponse {
   login: string;
@@ -505,6 +506,17 @@ export default function GitHubConnection() {
 
       // Attempt to fetch the user info which validates the token
       await fetchGithubUser(connection.token);
+
+      /*
+       * Only the shared server-side copy is authoritative — deploys and
+       * template imports read the token from there, not from localStorage.
+       */
+      await syncProviderConfig({
+        github: {
+          token: connection.token,
+          tokenType: connection.tokenType,
+        },
+      });
 
       toast.success('Connected to GitHub successfully');
     } catch (error) {

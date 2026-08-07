@@ -64,11 +64,13 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
 
-    # Dokploy's Traefik proxy reaches containers over this network. Without joining it the
-    # container runs and reports healthy, but the domain returns 502/404 because Traefik
-    # has no route to it. Point the domain at service "app", port 5173.
+    # dokploy-network is shared by every project on the host, so the compose service name
+    # "app" is not a safe DNS handle — another project's "app" can win the lookup. The
+    # tunnel dials this explicit alias instead.
     networks:
-      - dokploy-network
+      dokploy-network:
+        aliases:
+          - sitara-app
 
   # Cloudflare Tunnel — gives the app a real HTTPS origin without owning a domain and
   # without Let's Encrypt. This matters beyond convenience: WebContainer needs
@@ -82,11 +84,13 @@ services:
       - app
 
     # With a token: a named tunnel on a stable hostname (needs a domain on Cloudflare).
+    # The public hostname → service mapping lives in the Cloudflare dashboard, not here;
+    # point it at http://sitara-app:5173.
     # Without one: a quick tunnel that prints a random *.trycloudflare.com URL to its logs.
     command: >
       tunnel --no-autoupdate
       ${CLOUDFLARE_TUNNEL_TOKEN:+run --token ${CLOUDFLARE_TUNNEL_TOKEN}}
-      ${CLOUDFLARE_TUNNEL_TOKEN:---url http://app:5173}
+      ${CLOUDFLARE_TUNNEL_TOKEN:---url http://sitara-app:5173}
     networks:
       - dokploy-network
 

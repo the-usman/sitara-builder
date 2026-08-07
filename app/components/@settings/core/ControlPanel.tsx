@@ -34,6 +34,8 @@ import DebugTab from '~/components/@settings/tabs/debug/DebugTab';
 import { EventLogsTab } from '~/components/@settings/tabs/event-logs/EventLogsTab';
 import UpdateTab from '~/components/@settings/tabs/update/UpdateTab';
 import ConnectionsTab from '~/components/@settings/tabs/connections/ConnectionsTab';
+import ManagedConnectionsSummary from '~/components/@settings/tabs/connections/ManagedConnectionsSummary';
+import { useIsSuperAdmin } from '~/lib/hooks/useAppConfig';
 import CloudProvidersTab from '~/components/@settings/tabs/providers/cloud/CloudProvidersTab';
 import ServiceStatusTab from '~/components/@settings/tabs/providers/status/ServiceStatusTab';
 import LocalProvidersTab from '~/components/@settings/tabs/providers/local/LocalProvidersTab';
@@ -162,6 +164,9 @@ export const ControlPanel = ({ open, onClose }: ControlPanelProps) => {
   const tabConfiguration = useStore(tabConfigurationStore);
   const developerMode = useStore(developerModeStore);
   const profile = useStore(profileStore) as Profile;
+
+  // Only super admins may edit shared integration credentials.
+  const isSuperAdmin = useIsSuperAdmin();
 
   // Status hooks
   const { hasUpdate, currentVersion, acknowledgeUpdate } = useUpdateCheck();
@@ -319,12 +324,17 @@ export const ControlPanel = ({ open, onClose }: ControlPanelProps) => {
         return <FeaturesTab />;
       case 'data':
         return <DataTab />;
+      /*
+       * Integration credentials are managed centrally. Operators get a
+       * read-only summary instead of the editable forms; the server enforces
+       * the same rule, so this is presentation rather than protection.
+       */
       case 'cloud-providers':
-        return <CloudProvidersTab />;
+        return isSuperAdmin ? <CloudProvidersTab /> : <ManagedConnectionsSummary />;
       case 'local-providers':
-        return <LocalProvidersTab />;
+        return isSuperAdmin ? <LocalProvidersTab /> : <ManagedConnectionsSummary />;
       case 'connection':
-        return <ConnectionsTab />;
+        return isSuperAdmin ? <ConnectionsTab /> : <ManagedConnectionsSummary />;
       case 'debug':
         return <DebugTab />;
       case 'event-logs':

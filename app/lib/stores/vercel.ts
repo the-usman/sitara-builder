@@ -2,6 +2,7 @@ import { atom } from 'nanostores';
 import type { VercelConnection } from '~/types/vercel';
 import { logStore } from './logs';
 import { toast } from 'react-toastify';
+import { syncProviderConfig } from '~/lib/config/sync-config.client';
 
 // Initialize with stored connection or defaults
 const storedConnection = typeof window !== 'undefined' ? localStorage.getItem('vercel_connection') : null;
@@ -25,6 +26,17 @@ export const updateVercelConnection = (updates: Partial<VercelConnection>) => {
   // Persist to localStorage
   if (typeof window !== 'undefined') {
     localStorage.setItem('vercel_connection', JSON.stringify(newState));
+
+    /*
+     * localStorage is UI state only — the server reads the token from the
+     * shared config, so a token change has to be pushed there too. Rejected
+     * for anyone who is not a super admin.
+     */
+    if (updates.token !== undefined) {
+      syncProviderConfig({
+        vercel: { token: updates.token, label: newState.user?.username || newState.user?.name },
+      });
+    }
   }
 };
 

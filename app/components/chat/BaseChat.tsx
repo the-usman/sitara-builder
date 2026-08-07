@@ -13,6 +13,7 @@ import { PROVIDER_LIST } from '~/utils/constants';
 import { Messages } from './Messages.client';
 import { SendButton } from './SendButton.client';
 import { APIKeyManager, getApiKeysFromCookies } from './APIKeyManager';
+import { syncProviderConfig } from '~/lib/config/sync-config.client';
 import Cookies from 'js-cookie';
 import * as Tooltip from '@radix-ui/react-tooltip';
 
@@ -230,6 +231,12 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       const newApiKeys = { ...apiKeys, [providerName]: apiKey };
       setApiKeys(newApiKeys);
       Cookies.set('apiKeys', JSON.stringify(newApiKeys));
+
+      /*
+       * The cookie above is local UI state only; `/api/chat` reads keys from the
+       * shared config. Non-admins are rejected server-side, which is the point.
+       */
+      await syncProviderConfig({ apiKeys: { [providerName]: apiKey } });
 
       setIsModelLoading(providerName);
 

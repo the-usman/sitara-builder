@@ -2,6 +2,7 @@ import { atom } from 'nanostores';
 import type { NetlifyConnection, NetlifyUser } from '~/types/netlify';
 import { logStore } from './logs';
 import { toast } from 'react-toastify';
+import { syncProviderConfig } from '~/lib/config/sync-config.client';
 
 // Initialize with stored connection or environment variable
 const storedConnection = typeof window !== 'undefined' ? localStorage.getItem('netlify_connection') : null;
@@ -74,6 +75,17 @@ export const updateNetlifyConnection = (updates: Partial<NetlifyConnection>) => 
   // Persist to localStorage
   if (typeof window !== 'undefined') {
     localStorage.setItem('netlify_connection', JSON.stringify(newState));
+
+    /*
+     * localStorage is UI state only — the server reads the token from the
+     * shared config, so a token change has to be pushed there too. Rejected
+     * for anyone who is not a super admin.
+     */
+    if (updates.token !== undefined) {
+      syncProviderConfig({
+        netlify: { token: updates.token, label: newState.user?.full_name || newState.user?.email },
+      });
+    }
   }
 };
 

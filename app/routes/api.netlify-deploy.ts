@@ -1,6 +1,8 @@
 ﻿import { type ActionFunctionArgs, json } from '@remix-run/cloudflare';
 import type { NetlifySiteInfo } from '~/types/netlify';
 import { updateProjectUrl } from '~/lib/project-tracker.server';
+import { requireAuth } from '~/lib/auth.server';
+import { requireProviderToken } from '~/lib/config/provider-tokens.server';
 
 interface DeployRequestBody {
   siteId?: string;
@@ -19,13 +21,16 @@ async function sha1(message: string) {
 
 export async function action({ request, context }: ActionFunctionArgs) {
   const env = (context as any).cloudflare?.env;
+  await requireAuth(request, env);
+
+  /*
+   * Deploys always run against the shared, super-admin-managed Netlify account.
+   * A `token` in the request body is ignored.
+   */
+  const token = await requireProviderToken('netlify', env);
 
   try {
-    const { siteId, files, token, chatId } = (await request.json()) as DeployRequestBody & { token: string };
-
-    if (!token) {
-      return json({ error: 'Not connected to Netlify' }, { status: 401 });
-    }
+    const { siteId, files, chatId } = (await request.json()) as DeployRequestBody;
 
     let targetSiteId = siteId;
     let siteInfo: NetlifySiteInfo | undefined;

@@ -1,27 +1,44 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { createScopedLogger } from '~/utils/logger';
+import { requireAuth } from '~/lib/auth.server';
+import { getSupabaseTarget } from '~/lib/config/provider-tokens.server';
 
 const logger = createScopedLogger('api.supabase.query');
 
-export async function action({ request }: ActionFunctionArgs) {
+export async function action({ request, context }: ActionFunctionArgs) {
   if (request.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
   }
 
-  const authHeader = request.headers.get('Authorization');
+  const env = (context as any)?.cloudflare?.env;
+  await requireAuth(request, env);
 
-  if (!authHeader) {
-    return new Response('No authorization token provided', { status: 401 });
+  /*
+   * Previously the caller's `Authorization` header was forwarded straight to
+   * Supabase, which let anyone run SQL against any project they held a token
+   * for. The token and project now both come from the shared admin config.
+   */
+  const target = await getSupabaseTarget(env);
+
+  if (!target.token) {
+    return new Response('No Supabase credentials are configured. Ask a super admin to set them up.', { status: 409 });
   }
 
   try {
-    const { projectId, query } = (await request.json()) as any;
+    const body = (await request.json()) as { projectId?: string; query?: string };
+    const projectId = body.projectId || target.projectId;
+    const query = body.query;
+
+    if (!projectId) {
+      return new Response('No Supabase project has been selected by a super admin.', { status: 409 });
+    }
+
     logger.debug('Executing query:', { projectId, query });
 
     const response = await fetch(`https://api.supabase.com/v1/projects/${projectId}/database/query`, {
       method: 'POST',
       headers: {
-        Authorization: authHeader,
+        Authorization: `Bearer ${target.token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ query }),

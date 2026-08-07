@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { IconButton } from '~/components/ui/IconButton';
 import type { ProviderInfo } from '~/types/model';
 import Cookies from 'js-cookie';
+import { useIsSuperAdmin } from '~/lib/hooks/useAppConfig';
 
 interface APIKeyManagerProps {
   provider: ProviderInfo;
@@ -34,6 +35,9 @@ export function getApiKeysFromCookies() {
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export const APIKeyManager: React.FC<APIKeyManagerProps> = ({ provider, apiKey, setApiKey }) => {
   const [isEditing, setIsEditing] = useState(false);
+
+  // Operators cannot change LLM keys; the server ignores client-supplied ones.
+  const isSuperAdmin = useIsSuperAdmin();
   const [tempKey, setTempKey] = useState(apiKey);
   const [isEnvKeySet, setIsEnvKeySet] = useState(false);
 
@@ -100,12 +104,16 @@ export const APIKeyManager: React.FC<APIKeyManagerProps> = ({ provider, apiKey, 
               ) : isEnvKeySet ? (
                 <>
                   <div className="i-ph:check-circle-fill text-green-500 w-4 h-4" />
-                  <span className="text-xs text-green-500">Set via environment variable</span>
+                  <span className="text-xs text-green-500">
+                    {isSuperAdmin ? 'Set via environment variable' : 'Managed by your administrator'}
+                  </span>
                 </>
               ) : (
                 <>
                   <div className="i-ph:x-circle-fill text-red-500 w-4 h-4" />
-                  <span className="text-xs text-red-500">Not Set (Please set via UI or ENV_VAR)</span>
+                  <span className="text-xs text-red-500">
+                    {isSuperAdmin ? 'Not Set (Please set via UI or ENV_VAR)' : 'Not set — ask a super admin to add it'}
+                  </span>
                 </>
               )}
             </div>
@@ -114,7 +122,12 @@ export const APIKeyManager: React.FC<APIKeyManagerProps> = ({ provider, apiKey, 
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        {isEditing ? (
+        {!isSuperAdmin ? (
+          <span className="flex items-center gap-1.5 text-xs text-bolt-elements-textTertiary">
+            <div className="i-ph:lock-key w-3.5 h-3.5" />
+            Managed centrally
+          </span>
+        ) : isEditing ? (
           <div className="flex items-center gap-2">
             <input
               type="password"
