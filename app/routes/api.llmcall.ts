@@ -24,6 +24,23 @@ async function getModelList(options: {
 
 const logger = createScopedLogger('api.llmcall');
 
+/*
+ * Provider SDK errors (AI SDK `APICallError`, `TypeValidationError`, ...) carry deeply
+ * nested request/response objects that `console.log` cannot always inspect — Node's
+ * util.inspect throws `Cannot read properties of undefined (reading 'value')` on them,
+ * which replaces the real failure with a bogus TypeError. Log flat strings instead.
+ */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = (error as { cause?: unknown }).cause;
+    const causeText = cause instanceof Error ? ` | cause: ${cause.name}: ${cause.message}` : '';
+
+    return `${error.name}: ${error.message}${causeText}`;
+  }
+
+  return typeof error === 'string' ? error : Object.prototype.toString.call(error);
+}
+
 async function llmCallAction({ context, request }: ActionFunctionArgs) {
   const { system, message, model, provider, streamOutput } = await request.json<{
     system: string;
@@ -78,7 +95,7 @@ async function llmCallAction({ context, request }: ActionFunctionArgs) {
         },
       });
     } catch (error: unknown) {
-      console.log(error);
+      logger.error(describeError(error));
 
       if (error instanceof Error && error.message?.includes('API key')) {
         throw new Response('Invalid or missing API key', {
@@ -137,7 +154,7 @@ async function llmCallAction({ context, request }: ActionFunctionArgs) {
         },
       });
     } catch (error: unknown) {
-      console.log(error);
+      logger.error(describeError(error));
 
       if (error instanceof Error && error.message?.includes('API key')) {
         throw new Response('Invalid or missing API key', {
