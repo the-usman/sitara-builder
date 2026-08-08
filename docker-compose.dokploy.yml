@@ -4,7 +4,11 @@
 # variables below under the app's "Environment" tab. They are injected at runtime and are
 # never baked into the image (.dockerignore excludes .env and *.local).
 #
-# Required: MONGODB_URI, JWT_SECRET, APP_DOMAIN. Everything else is optional.
+# Required: MONGODB_URI, JWT_SECRET. Everything else is optional.
+#
+# APP_DOMAIN overrides the hostname Traefik routes; it defaults to the production one below
+# because Dokploy regenerates .env on every deploy, and an unset variable rendered as
+# Host(``) — a rule that matches nothing, so Traefik falls through to its default 404.
 
 services:
   app:
@@ -82,7 +86,7 @@ services:
       - 'traefik.docker.network=dokploy-network'
 
       # HTTPS.
-      - 'traefik.http.routers.sitara-builder.rule=Host(`${APP_DOMAIN}`)'
+      - 'traefik.http.routers.sitara-builder.rule=Host(`${APP_DOMAIN:-builder.d2media.com.au}`)'
       - 'traefik.http.routers.sitara-builder.entrypoints=websecure'
       - 'traefik.http.routers.sitara-builder.tls=true'
       - 'traefik.http.routers.sitara-builder.tls.certresolver=letsencrypt'
@@ -90,7 +94,7 @@ services:
 
       # Port 80 carries the ACME HTTP-01 challenge, then redirects. Dropping this router
       # entirely would break certificate renewal, not just the redirect.
-      - 'traefik.http.routers.sitara-builder-web.rule=Host(`${APP_DOMAIN}`)'
+      - 'traefik.http.routers.sitara-builder-web.rule=Host(`${APP_DOMAIN:-builder.d2media.com.au}`)'
       - 'traefik.http.routers.sitara-builder-web.entrypoints=web'
       - 'traefik.http.routers.sitara-builder-web.middlewares=sitara-builder-https'
       - 'traefik.http.middlewares.sitara-builder-https.redirectscheme.scheme=https'
