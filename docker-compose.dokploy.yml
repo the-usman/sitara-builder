@@ -4,7 +4,7 @@
 # variables below under the app's "Environment" tab. They are injected at runtime and are
 # never baked into the image (.dockerignore excludes .env and *.local).
 #
-# Required: MONGODB_URI, JWT_SECRET. Everything else is optional.
+# Required: MONGODB_URI, JWT_SECRET, APP_DOMAIN. Everything else is optional.
 
 services:
   app:
@@ -13,8 +13,11 @@ services:
       dockerfile: Dockerfile
       target: bolt-ai-production
     restart: unless-stopped
-    ports:
-      - '${PORT:-5173}:5173'
+
+    # Not published to the host. Traefik reaches the container over dokploy-network, so a
+    # host port mapping would only add a plain-HTTP way in that bypasses TLS entirely.
+    expose:
+      - '5173'
     environment:
       NODE_ENV: production
       RUNNING_IN_DOCKER: 'true'
@@ -64,33 +67,41 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
 
-    # dokploy-network is shared by every project on the host, so the compose service name
-    # "app" is not a safe DNS handle — another project's "app" can win the lookup. The
-    # tunnel dials this explicit alias instead.
-    networks:
-      dokploy-network:
-        aliases:
-          - sitara-app
+    # Routing is declared here rather than in Dokploy's "Domains" tab. The tab writes the
+    # same labels into a generated override, but only regenerates them on deploy — which is
+    # the usual source of a 404: Traefik is reachable, no router matches the Host, so it
+    # falls through to its default 404 handler. Labels in the compose file cannot drift.
+    #
+    # Names are project-scoped ("sitara-builder") because Traefik router and service names
+    # share one namespace across every app on this host.
+    labels:
+      - 'traefik.enable=true'
 
-  # Cloudflare Tunnel — gives the app a real HTTPS origin without owning a domain and
-  # without Let's Encrypt. This matters beyond convenience: WebContainer needs
-  # SharedArrayBuffer, which browsers only expose in a secure context, so the bolt shell
-  # cannot start over plain HTTP. The tunnel dials out to Cloudflare, so it also sidesteps
-  # inbound routing entirely — no Traefik, no open ports, no cert to renew.
-  tunnel:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    depends_on:
-      - app
+      # The container sits on one network here, but Traefik still refuses to guess when a
+      # container is multi-homed. Being explicit costs nothing and removes a failure mode.
+      - 'traefik.docker.network=dokploy-network'
 
-    # With a token: a named tunnel on a stable hostname (needs a domain on Cloudflare).
-    # The public hostname → service mapping lives in the Cloudflare dashboard, not here;
-    # point it at http://sitara-app:5173.
-    # Without one: a quick tunnel that prints a random *.trycloudflare.com URL to its logs.
-    command: >
-      tunnel --no-autoupdate
-      ${CLOUDFLARE_TUNNEL_TOKEN:+run --token ${CLOUDFLARE_TUNNEL_TOKEN}}
-      ${CLOUDFLARE_TUNNEL_TOKEN:---url http://sitara-app:5173}
+      # HTTPS.
+      - 'traefik.http.routers.sitara-builder.rule=Host(`${APP_DOMAIN}`)'
+      - 'traefik.http.routers.sitara-builder.entrypoints=websecure'
+      - 'traefik.http.routers.sitara-builder.tls=true'
+      - 'traefik.http.routers.sitara-builder.tls.certresolver=letsencrypt'
+      - 'traefik.http.routers.sitara-builder.service=sitara-builder'
+
+      # Port 80 carries the ACME HTTP-01 challenge, then redirects. Dropping this router
+      # entirely would break certificate renewal, not just the redirect.
+      - 'traefik.http.routers.sitara-builder-web.rule=Host(`${APP_DOMAIN}`)'
+      - 'traefik.http.routers.sitara-builder-web.entrypoints=web'
+      - 'traefik.http.routers.sitara-builder-web.middlewares=sitara-builder-https'
+      - 'traefik.http.middlewares.sitara-builder-https.redirectscheme.scheme=https'
+
+      # Which container port to forward to. Omitting this is the other common 404/502:
+      # Traefik picks an arbitrary exposed port when the service does not name one.
+      - 'traefik.http.services.sitara-builder.loadbalancer.server.port=5173'
+
+    # Dokploy's Traefik proxy reaches containers over this network. Without joining it the
+    # container runs and reports healthy while the domain returns 502/404, because Traefik
+    # has no route to it.
     networks:
       - dokploy-network
 
