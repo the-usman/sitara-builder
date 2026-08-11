@@ -4,6 +4,12 @@ import { createScopedLogger } from '~/utils/logger';
 
 const logger = createScopedLogger('usePromptEnhancement');
 
+export interface EnhancerClient {
+  _id: string;
+  clientName: string;
+  productName: string;
+}
+
 export function usePromptEnhancer() {
   const [enhancingPrompt, setEnhancingPrompt] = useState(false);
   const [promptEnhanced, setPromptEnhanced] = useState(false);
@@ -19,6 +25,16 @@ export function usePromptEnhancer() {
     model: string,
     provider: ProviderInfo,
     apiKeys?: Record<string, string>,
+    chatContext?: {
+      // Stable ID of the chat this refine belongs to — same value api.chat.ts uses to
+      // attribute cost to a project (see project-tracker.server.ts). The caller is
+      // responsible for pre-generating one even for a brand-new chat (whose first
+      // message doesn't exist yet) so the refine's cost can still be tracked.
+      trackingId?: string;
+      hasExistingSite?: boolean;
+      chatId?: string;
+      selectedClient?: EnhancerClient | null;
+    },
   ) => {
     setEnhancingPrompt(true);
     setPromptEnhanced(false);
@@ -27,6 +43,10 @@ export function usePromptEnhancer() {
       message: input,
       model,
       provider,
+      hasExistingSite: chatContext?.hasExistingSite ?? false,
+      trackingId: chatContext?.trackingId,
+      chatId: chatContext?.chatId,
+      selectedClient: chatContext?.selectedClient ?? undefined,
     };
 
     if (apiKeys) {

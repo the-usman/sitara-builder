@@ -3,7 +3,7 @@
  * Preventing TS checks with files presented in the video for a better presentation.
  */
 import { useStore } from '@nanostores/react';
-import type { Message } from 'ai';
+import { generateId, type Message } from 'ai';
 import { useChat } from 'ai/react';
 import { useAnimate } from 'framer-motion';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -132,6 +132,10 @@ export const ChatImpl = memo(
     const [clientsLoading, setClientsLoading] = useState(false);
     // Ref stores the confirmed client synchronously — React state batching makes useChat body stale
     const selectedClientRef = useRef<{ _id: string; clientName: string; productName: string } | null>(null);
+    // Pre-generated ID for a brand-new chat's first user message — created the moment it's first
+    // needed (e.g. an enhance click before any message exists) and reused as that message's real
+    // `id` when it's actually sent, so cost tracking (trackingId) is consistent from the start.
+    const pendingMessageIdRef = useRef<string | null>(null);
     // Guard: prevents modal re-triggering when description prop hasn't re-rendered yet
     const chatConfiguredRef = useRef(false);
     const files = useStore(workbenchStore.files);
@@ -410,7 +414,9 @@ export const ChatImpl = memo(
               const { assistantMessage, userMessage } = temResp;
               setMessages([
                 {
-                  id: `1-${new Date().getTime()}`,
+                  // Reuse the pending ID if the enhancer already generated one, so tracked cost
+                  // (see project-tracker.server.ts) lands on the same record as this message.
+                  id: pendingMessageIdRef.current ?? generateId(),
                   role: 'user',
                   content: [
                     {
@@ -436,6 +442,7 @@ export const ChatImpl = memo(
                 },
               ]);
               reload({ body: { selectedClient: selectedClientRef.current } });
+              pendingMessageIdRef.current = null;
               setInput('');
               Cookies.remove(PROMPT_COOKIE_KEY);
 
@@ -455,6 +462,9 @@ export const ChatImpl = memo(
         // If autoSelectTemplate is disabled or template selection failed, proceed with normal message
         append(
           {
+            // Reuse the pending ID if the enhancer already generated one, so tracked cost
+            // (see project-tracker.server.ts) lands on the same record as this message.
+            id: pendingMessageIdRef.current ?? generateId(),
             role: 'user',
             content: [
               {
@@ -469,6 +479,7 @@ export const ChatImpl = memo(
           },
           { body: { selectedClient: selectedClientRef.current } },
         );
+        pendingMessageIdRef.current = null;
         setFakeLoading(false);
         setInput('');
         Cookies.remove(PROMPT_COOKIE_KEY);
@@ -661,7 +672,10 @@ export const ChatImpl = memo(
 
               <div className="flex gap-3 justify-end">
                 <button
-                  onClick={() => { setShowNameModal(false); setPendingMessage(null); }}
+                  onClick={() => {
+                    setShowNameModal(false);
+                    setPendingMessage(null);
+                  }}
                   className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
                 >
                   Cancel
@@ -678,65 +692,79 @@ export const ChatImpl = memo(
           </div>
         )}
         <BaseChat
-        ref={animationScope}
-        textareaRef={textareaRef}
-        input={input}
-        showChat={showChat}
-        chatStarted={chatStarted}
-        isStreaming={isLoading || fakeLoading}
-        onStreamingChange={(streaming) => {
-          streamingState.set(streaming);
-        }}
-        enhancingPrompt={enhancingPrompt}
-        promptEnhanced={promptEnhanced}
-        sendMessage={sendMessage}
-        model={model}
-        setModel={handleModelChange}
-        provider={provider}
-        setProvider={handleProviderChange}
-        providerList={activeProviders}
-        handleInputChange={(e) => {
-          onTextareaChange(e);
-          debouncedCachePrompt(e);
-        }}
-        handleStop={abort}
-        description={description}
-        importChat={importChat}
-        exportChat={exportChat}
-        messages={messages.map((message, i) => {
-          if (message.role === 'user') {
-            return message;
-          }
+          ref={animationScope}
+          textareaRef={textareaRef}
+          input={input}
+          showChat={showChat}
+          chatStarted={chatStarted}
+          isStreaming={isLoading || fakeLoading}
+          onStreamingChange={(streaming) => {
+            streamingState.set(streaming);
+          }}
+          enhancingPrompt={enhancingPrompt}
+          promptEnhanced={promptEnhanced}
+          sendMessage={sendMessage}
+          model={model}
+          setModel={handleModelChange}
+          provider={provider}
+          setProvider={handleProviderChange}
+          providerList={activeProviders}
+          handleInputChange={(e) => {
+            onTextareaChange(e);
+            debouncedCachePrompt(e);
+          }}
+          handleStop={abort}
+          description={description}
+          importChat={importChat}
+          exportChat={exportChat}
+          messages={messages.map((message, i) => {
+            if (message.role === 'user') {
+              return message;
+            }
 
-          return {
-            ...message,
-            content: parsedMessages[i] || '',
-          };
-        })}
-        enhancePrompt={() => {
-          enhancePrompt(
-            input,
-            (input) => {
-              setInput(input);
-              scrollTextArea();
-            },
-            model,
-            provider,
-            apiKeys,
-          );
-        }}
-        uploadedFiles={uploadedFiles}
-        setUploadedFiles={setUploadedFiles}
-        imageDataList={imageDataList}
-        setImageDataList={setImageDataList}
-        actionAlert={actionAlert}
-        clearAlert={() => workbenchStore.clearAlert()}
-        supabaseAlert={supabaseAlert}
-        clearSupabaseAlert={() => workbenchStore.clearSupabaseAlert()}
-        deployAlert={deployAlert}
-        clearDeployAlert={() => workbenchStore.clearDeployAlert()}
-        data={chatData}
-      />
+            return {
+              ...message,
+              content: parsedMessages[i] || '',
+            };
+          })}
+          enhancePrompt={() => {
+            const existingTrackingId = messages.find((m) => m.role === 'user')?.id;
+
+            // No message sent yet in this chat — reuse (or create) the pending ID so the
+            // refine's cost lands on the same trackingId the first message will get.
+            if (!existingTrackingId && !pendingMessageIdRef.current) {
+              pendingMessageIdRef.current = generateId();
+            }
+
+            enhancePrompt(
+              input,
+              (input) => {
+                setInput(input);
+                scrollTextArea();
+              },
+              model,
+              provider,
+              apiKeys,
+              {
+                trackingId: existingTrackingId ?? pendingMessageIdRef.current ?? undefined,
+                hasExistingSite: messages.length > 0,
+                chatId: currentChatId,
+                selectedClient: selectedClientRef.current,
+              },
+            );
+          }}
+          uploadedFiles={uploadedFiles}
+          setUploadedFiles={setUploadedFiles}
+          imageDataList={imageDataList}
+          setImageDataList={setImageDataList}
+          actionAlert={actionAlert}
+          clearAlert={() => workbenchStore.clearAlert()}
+          supabaseAlert={supabaseAlert}
+          clearSupabaseAlert={() => workbenchStore.clearSupabaseAlert()}
+          deployAlert={deployAlert}
+          clearDeployAlert={() => workbenchStore.clearDeployAlert()}
+          data={chatData}
+        />
       </>
     );
   },

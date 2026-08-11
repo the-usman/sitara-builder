@@ -2,8 +2,14 @@ import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { streamText } from '~/lib/.server/llm/stream-text';
 import { stripIndents } from '~/utils/stripIndent';
 import type { ProviderInfo } from '~/types/model';
-import { getApiKeysFromCookie, getProviderSettingsFromCookie } from '~/lib/api/cookies';
+import { getProviderSettingsFromCookie } from '~/lib/api/cookies';
 import { createScopedLogger } from '~/utils/logger';
+import { PROMPT_REFINER_SYSTEM_PROMPT } from '~/lib/common/prompts/prompt-refiner';
+import { getAuthToken, verifyJwt } from '~/lib/auth.server';
+import { readAppConfig } from '~/lib/config/app-config.server';
+import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
+import { computeCost } from '~/lib/.server/llm/model-pricing';
+import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
 
 export async function action(args: ActionFunctionArgs) {
   return enhancerAction(args);
@@ -12,11 +18,17 @@ export async function action(args: ActionFunctionArgs) {
 const logger = createScopedLogger('api.enhancher');
 
 async function enhancerAction({ context, request }: ActionFunctionArgs) {
-  const { message, model, provider } = await request.json<{
+  const { message, model, provider, hasExistingSite, trackingId, chatId, selectedClient } = await request.json<{
     message: string;
     model: string;
     provider: ProviderInfo;
     apiKeys?: Record<string, string>;
+    // whether a site already exists in this chat — lets the refiner choose BUILD vs EDIT mode
+    hasExistingSite?: boolean;
+    // first user message ID of the chat this refine belongs to, for cost tracking (see api.chat.ts)
+    trackingId?: string;
+    chatId?: string;
+    selectedClient?: ChatClient;
   }>();
 
   const { name: providerName } = provider;
@@ -37,8 +49,13 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
   }
 
   const cookieHeader = request.headers.get('Cookie');
-  const apiKeys = getApiKeysFromCookie(cookieHeader);
   const providerSettings = getProviderSettingsFromCookie(cookieHeader);
+
+  const env = (context as any).cloudflare?.env;
+  const authUser = await verifyJwt(getAuthToken(request) || '', env);
+
+  // LLM keys come from the super-admin-managed config only — see api.chat.ts for why.
+  const { apiKeys } = await readAppConfig(env);
 
   try {
     const result = await streamText({
@@ -48,28 +65,12 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
           content:
             `[Model: ${model}]\n\n[Provider: ${providerName}]\n\n` +
             stripIndents`
-            You are a professional prompt engineer specializing in crafting precise, effective prompts.
-            Your task is to enhance prompts by making them more specific, actionable, and effective.
+            ${hasExistingSite ? 'A site already exists in this conversation, so lean EDIT MODE unless the request clearly asks for something brand new.' : 'No site exists yet in this conversation, so this is BUILD MODE.'}
 
-            I want you to improve the user prompt that is wrapped in \`<original_prompt>\` tags.
+            Refine the raw request wrapped in \`<original_prompt>\` tags into the structured generation prompt described in your system instructions.
 
-            For valid prompts:
-            - Make instructions explicit and unambiguous
-            - Add relevant context and constraints
-            - Remove redundant information
-            - Maintain the core intent
-            - Ensure the prompt is self-contained
-            - Use professional language
-
-            For invalid or unclear prompts:
-            - Respond with clear, professional guidance
-            - Keep responses concise and actionable
-            - Maintain a helpful, constructive tone
-            - Focus on what the user should provide
-            - Use a standard template for consistency
-
-            IMPORTANT: Your response must ONLY contain the enhanced prompt text.
-            Do not include any explanations, metadata, or wrapper tags.
+            IMPORTANT: Your response must ONLY contain the refined prompt text, formatted exactly per the output format for the mode you determine applies.
+            Do not include any explanations, metadata, or wrapper tags outside that format.
 
             <original_prompt>
               ${message}
@@ -81,8 +82,63 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
       apiKeys,
       providerSettings,
       options: {
-        system:
-          'You are a senior software principal architect, you should help the user analyse the user query and enrich it with the necessary context and constraints to make it more specific, actionable, and effective. You should also ensure that the prompt is self-contained and uses professional language. Your response should ONLY contain the enhanced prompt text. Do not include any explanations, metadata, or wrapper tags.',
+        system: PROMPT_REFINER_SYSTEM_PROMPT,
+        onFinish: async ({ usage }) => {
+          if (!usage) {
+            return;
+          }
+
+          const liveRate = await getLiveModelRate(
+            providerName,
+            model,
+            context.cloudflare?.env as unknown as Record<string, string>,
+            apiKeys,
+          );
+          const cost = computeCost(providerName, model, usage.promptTokens || 0, usage.completionTokens || 0, liveRate);
+
+          if (!authUser) {
+            logger.debug('[refiner-tracker] SKIP: no authUser');
+            return;
+          }
+
+          if (!trackingId) {
+            // Happens for the very first message of a brand-new chat, before it has an ID yet.
+            logger.debug('[refiner-tracker] SKIP: no trackingId (new chat, not yet sent)');
+            return;
+          }
+
+          if (!selectedClient) {
+            logger.debug('[refiner-tracker] SKIP: no selectedClient');
+            return;
+          }
+
+          const modelKey = `${model}:${providerName}`.replace(/\./g, '_');
+
+          try {
+            await upsertProject(
+              trackingId,
+              trackingId,
+              { userId: authUser.userId, email: authUser.email, name: authUser.name, role: authUser.role },
+              selectedClient,
+              modelKey,
+              {
+                model,
+                provider: providerName,
+                promptTokens: usage.promptTokens || 0,
+                completionTokens: usage.completionTokens || 0,
+                totalTokens: usage.totalTokens || 0,
+                promptCost: cost.promptCost,
+                completionCost: cost.completionCost,
+                cost: cost.totalCost,
+              },
+              chatId,
+              env,
+            );
+            logger.debug(`[refiner-tracker] upsert SUCCESS for ${trackingId} — cost: $${cost.totalCost.toFixed(4)}`);
+          } catch (err) {
+            logger.error('[refiner-tracker] upsert FAILED:', String(err));
+          }
+        },
 
         /*
          * onError: (event) => {
