@@ -10,12 +10,21 @@ import { readAppConfig } from '~/lib/config/app-config.server';
 import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
 import { computeCost } from '~/lib/.server/llm/model-pricing';
 import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
+import { resolveImageQueries } from '~/lib/.server/images/resolve-image-query.server';
 
 export async function action(args: ActionFunctionArgs) {
   return enhancerAction(args);
 }
 
 const logger = createScopedLogger('api.enhancher');
+
+// Matches the mandatory `Unsplash query: "..."` form the refiner's system prompt requires
+// for every image reference — see prompt-refiner.ts IMAGE STRATEGY.
+const IMAGE_QUERY_PATTERN = /Unsplash query:\s*"([^"]{3,200})"/gi;
+
+function extractImageQueries(text: string): string[] {
+  return Array.from(text.matchAll(IMAGE_QUERY_PATTERN), (m) => m[1].trim());
+}
 
 async function enhancerAction({ context, request }: ActionFunctionArgs) {
   const { message, model, provider, hasExistingSite, trackingId, chatId, selectedClient } = await request.json<{
@@ -166,8 +175,69 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
       }
     })();
 
-    // Return the text stream directly since it's already text data
-    return new Response(result.textStream, {
+    /*
+     * Pipe the refiner's text straight through live (preserves the streamed "typing"
+     * effect), while also buffering it. Once it finishes, extract every `Unsplash
+     * query: "..."` the refiner wrote and resolve each to a real, currently-working
+     * photo URL (see resolve-image-query.server.ts) instead of letting the generator
+     * guess or hallucinate an image link that 404s. The resolved links are appended
+     * as one more chunk before the stream closes.
+     */
+    const encoder = new TextEncoder();
+    const bufferedChunks: string[] = [];
+
+    const combinedStream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const reader = result.textStream.getReader();
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              break;
+            }
+
+            bufferedChunks.push(value);
+            controller.enqueue(encoder.encode(value));
+          }
+        } catch (error) {
+          controller.error(error);
+          return;
+        }
+
+        try {
+          const queries = extractImageQueries(bufferedChunks.join(''));
+
+          if (queries.length > 0) {
+            const resolved = await resolveImageQueries(
+              queries,
+              context.cloudflare?.env as unknown as Record<string, string>,
+              apiKeys,
+            );
+
+            const lines = queries.map((query) => {
+              const url = resolved.get(query);
+              return url
+                ? `- "${query}" → ${url}`
+                : `- "${query}" → [no verified photo found — use a solid-color or gradient placeholder here instead of a photo URL, do not invent a link]`;
+            });
+
+            controller.enqueue(
+              encoder.encode(
+                `\n\n---\n\n## VERIFIED IMAGE URLS (real, working links — use these exact URLs, do not substitute your own)\n\n${lines.join('\n')}\n`,
+              ),
+            );
+          }
+        } catch (error) {
+          logger.error('Image query resolution failed:', String(error));
+        }
+
+        controller.close();
+      },
+    });
+
+    return new Response(combinedStream, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
