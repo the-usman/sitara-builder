@@ -19,11 +19,12 @@ export async function openDatabase(): Promise<IDBDatabase | undefined> {
   }
 
   return new Promise((resolve) => {
-    const request = indexedDB.open('boltHistory', 2);
+    const request = indexedDB.open('boltHistory', 3);
 
     request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const db = (event.target as IDBOpenDBRequest).result;
       const oldVersion = event.oldVersion;
+      const upgradeTransaction = (event.target as IDBOpenDBRequest).transaction;
 
       if (oldVersion < 1) {
         if (!db.objectStoreNames.contains('chats')) {
@@ -37,6 +38,22 @@ export async function openDatabase(): Promise<IDBDatabase | undefined> {
         if (!db.objectStoreNames.contains('snapshots')) {
           db.createObjectStore('snapshots', { keyPath: 'chatId' });
         }
+      }
+
+      if (oldVersion < 3 && upgradeTransaction) {
+        /*
+         * urlId is a display/routing convenience minted independently per browser (e.g.
+         * the "imported-files-N" fallback name) — it is NOT unique once chats sync across
+         * devices/accounts (see chat-sync.client.ts), so enforcing uniqueness here throws
+         * "Unable to add key to index 'urlId'" the moment two synced chats collide.
+         */
+        const store = upgradeTransaction.objectStore('chats');
+
+        if (store.indexNames.contains('urlId')) {
+          store.deleteIndex('urlId');
+        }
+
+        store.createIndex('urlId', 'urlId', { unique: false });
       }
     };
 
@@ -189,8 +206,18 @@ export async function getNextId(db: IDBDatabase): Promise<string> {
     const request = store.getAllKeys();
 
     request.onsuccess = () => {
-      const highestId = request.result.reduce((cur, acc) => Math.max(+cur, +acc), 0);
-      resolve(String(+highestId + 1));
+      /*
+       * Keys are usually sequential numbers, but chats pulled from the server sync
+       * (see chat-sync.client.ts) are stored keyed by urlId/trackingId, which are
+       * non-numeric strings. `+"some-id"` is NaN, and Math.max poisons to NaN forever
+       * once any single key is non-numeric — that's what produced the "/chat/NaN" bug.
+       * Skip non-numeric keys instead of feeding them into the max.
+       */
+      const highestId = request.result.reduce((highest: number, key) => {
+        const numericKey = Number(key);
+        return Number.isFinite(numericKey) ? Math.max(highest, numericKey) : highest;
+      }, 0);
+      resolve(String(highestId + 1));
     };
 
     request.onerror = () => reject(request.error);

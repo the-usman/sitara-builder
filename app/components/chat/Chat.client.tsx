@@ -16,6 +16,7 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER, PROMPT_COOKIE_KEY, PROVIDER_LIST } fro
 import { cubicEasingFn } from '~/utils/easings';
 import { createScopedLogger, renderLogger } from '~/utils/logger';
 import { BaseChat } from './BaseChat';
+import { DecodeWebsiteDialog } from './DecodeWebsiteDialog';
 import Cookies from 'js-cookie';
 import { debounce } from '~/utils/debounce';
 import { useSettings } from '~/lib/hooks/useSettings';
@@ -38,7 +39,15 @@ const logger = createScopedLogger('Chat');
 export function Chat() {
   renderLogger.trace('Chat');
 
-  const { ready, initialMessages, storeMessageHistory, importChat, exportChat } = useChatHistory();
+  const {
+    ready,
+    initialMessages,
+    storeMessageHistory,
+    importChat,
+    exportChat,
+    justPulledFromServer,
+    dismissDecodePrompt,
+  } = useChatHistory();
   const title = useStore(descriptionAtom);
   useEffect(() => {
     workbenchStore.setReloadedMessages(initialMessages.map((m) => m.id));
@@ -53,6 +62,8 @@ export function Chat() {
           exportChat={exportChat}
           storeMessageHistory={storeMessageHistory}
           importChat={importChat}
+          justPulledFromServer={justPulledFromServer}
+          dismissDecodePrompt={dismissDecodePrompt}
         />
       )}
       <ToastContainer
@@ -111,10 +122,20 @@ interface ChatProps {
   importChat: (description: string, messages: Message[]) => Promise<void>;
   exportChat: () => void;
   description?: string;
+  justPulledFromServer: boolean;
+  dismissDecodePrompt: () => void;
 }
 
 export const ChatImpl = memo(
-  ({ description, initialMessages, storeMessageHistory, importChat, exportChat }: ChatProps) => {
+  ({
+    description,
+    initialMessages,
+    storeMessageHistory,
+    importChat,
+    exportChat,
+    justPulledFromServer,
+    dismissDecodePrompt,
+  }: ChatProps) => {
     useShortcuts();
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -691,6 +712,11 @@ export const ChatImpl = memo(
             </div>
           </div>
         )}
+        <DecodeWebsiteDialog
+          open={justPulledFromServer}
+          onDecode={dismissDecodePrompt}
+          onDismiss={dismissDecodePrompt}
+        />
         <BaseChat
           ref={animationScope}
           textareaRef={textareaRef}

@@ -32,6 +32,14 @@ export interface ChatHistoryItem {
   messages: Message[];
   timestamp: string;
   metadata?: IChatMetadata;
+
+  /**
+   * Set for chats listed from the server (`listRemoteChats`) that don't have a local
+   * IndexedDB row yet — e.g. a chat created on another PC. Per-item actions that touch
+   * the local DB (export/duplicate/rename/delete) can't operate on these until the chat
+   * has actually been opened once, which pulls it into IndexedDB.
+   */
+  isRemote?: boolean;
 }
 
 const persistenceEnabled = !import.meta.env.VITE_DISABLE_PERSISTENCE;
@@ -50,6 +58,18 @@ export function useChatHistory() {
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [ready, setReady] = useState<boolean>(false);
   const [urlId, setUrlId] = useState<string | undefined>();
+
+  /*
+   * True for the rest of this load when the chat was pulled from the server rather than
+   * found in this browser's own IndexedDB (e.g. opened on a different device). Restore
+   * itself is NOT deferred on this — the file snapshot still gets applied immediately
+   * and automatically, same as a normal reopen, because deferring the injection of the
+   * "Restored Project & Setup" message into a later setMessages() call broke the
+   * streaming/artifact parser (it hung on "Creating initial files" with an empty file
+   * tree). This flag is purely a display cue so Chat.client.tsx can show a "Decode to
+   * see this website" confirmation before revealing the already-restored workbench.
+   */
+  const [justPulledFromServer, setJustPulledFromServer] = useState(false);
 
   useEffect(() => {
     if (!db) {
@@ -93,11 +113,23 @@ export function useChatHistory() {
            * was built on. Pull the server copy and write it into IndexedDB so every later load
            * — and the rest of this function — can treat it as an ordinary local chat.
            */
+          let isRemotePull = false;
+
           if (!storedMessages || storedMessages.messages.length === 0) {
             const remote = await pullChat(mixedId);
 
             if (remote) {
-              const localId = remote.urlId || remote.trackingId;
+              isRemotePull = true;
+              /*
+               * Always key the local cache by trackingId, never urlId. urlId is a
+               * display/routing convenience minted independently per browser (e.g. the
+               * "imported-files-N" fallback name), so it is NOT unique across accounts —
+               * two different chats pulled from different devices can share one, which
+               * previously either overwrote the wrong local chat or threw "Unable to add
+               * key to index 'urlId'" against the unique index. trackingId (the first
+               * user message's id) is the value actually guaranteed unique.
+               */
+              const localId = remote.trackingId;
 
               await setMessages(
                 db,
@@ -175,7 +207,7 @@ export function useChatHistory() {
               // Call the modified function to get only the command actions string
               const commandActionsString = createCommandActionsString(projectCommands);
 
-              filteredMessages = [
+              const restoreMessages: Message[] = [
                 {
                   id: generateId(),
                   role: 'user',
@@ -202,7 +234,7 @@ ${value.content}
                       }
                     })
                     .join('\n')}
-                  ${commandActionsString} 
+                  ${commandActionsString}
                   </boltArtifact>
                   `, // Added commandActionsString, followupMessage, updated id and title
                   annotations: [
@@ -218,16 +250,14 @@ ${value.content}
                       : []),
                   ],
                 },
-
-                // Remove the separate user and assistant messages for commands
-                /*
-                 *...(commands !== null // This block is no longer needed
-                 *  ? [ ... ]
-                 *  : []),
-                 */
-                ...filteredMessages,
               ];
+
+              filteredMessages = [...restoreMessages, ...filteredMessages];
               restoreSnapshot(mixedId);
+
+              if (isRemotePull) {
+                setJustPulledFromServer(true);
+              }
             }
 
             setInitialMessages(filteredMessages);
@@ -331,6 +361,8 @@ ${value.content}
   return {
     ready: !mixedId || ready,
     initialMessages,
+    justPulledFromServer,
+    dismissDecodePrompt: () => setJustPulledFromServer(false),
     updateChatMestaData: async (metadata: IChatMetadata) => {
       const id = chatId.get();
 

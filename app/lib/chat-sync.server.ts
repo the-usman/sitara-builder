@@ -17,7 +17,11 @@ interface StoredSnapshot {
 }
 
 export interface SyncedChatDoc {
-  /** Owner. Always taken from the session — never from the request body. */
+  /**
+   * Original creator. Always taken from the session — never from the request body.
+   * Set once on insert and never overwritten, so authorship survives a super_admin
+   * later editing the same chat.
+   */
   userId: string;
 
   /** First user message ID: stable across devices, unlike the IndexedDB sequential ID. */
@@ -124,8 +128,35 @@ export function parseChatSyncPayload(body: unknown): ChatSyncPayload {
   return payload;
 }
 
-export async function putSyncedChat(userId: string, payload: ChatSyncPayload, env?: ServerEnv): Promise<void> {
-  await withMongo(env, async (db) => {
+export interface RequestingUser {
+  userId: string;
+  role: string;
+}
+
+function canAccessChat(requestingUser: RequestingUser, ownerUserId: string): boolean {
+  return requestingUser.role === 'super_admin' || requestingUser.userId === ownerUserId;
+}
+
+/**
+ * Upserts one chat, keyed on `trackingId` alone (not `userId` + `trackingId`) so the
+ * same chat resolves to a single shared document that a super_admin can edit without
+ * forking a private copy. `trackingId` is the first user message ID minted by the `ai`
+ * SDK's `generateId()`, which is unique enough across users to serve as the sole key.
+ * A non-owner, non-super_admin caller is rejected before any write happens.
+ */
+export async function putSyncedChat(
+  requestingUser: RequestingUser,
+  payload: ChatSyncPayload,
+  env?: ServerEnv,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  return withMongo(env, async (db) => {
+    const collection = db.collection<SyncedChatDoc>(COLLECTION);
+    const existing = await collection.findOne({ trackingId: payload.trackingId }, { projection: { userId: 1 } });
+
+    if (existing && !canAccessChat(requestingUser, existing.userId)) {
+      return { ok: false, status: 403, error: 'You do not have access to this chat' };
+    }
+
     const now = new Date();
     const snapshot: StoredSnapshot | undefined = payload.snapshot
       ? {
@@ -136,8 +167,8 @@ export async function putSyncedChat(userId: string, payload: ChatSyncPayload, en
         }
       : undefined;
 
-    return db.collection<SyncedChatDoc>(COLLECTION).updateOne(
-      { userId, trackingId: payload.trackingId },
+    await collection.updateOne(
+      { trackingId: payload.trackingId },
       {
         $set: {
           urlId: payload.urlId,
@@ -152,10 +183,13 @@ export async function putSyncedChat(userId: string, payload: ChatSyncPayload, en
            */
           ...(snapshot ? { snapshot } : {}),
         },
-        $setOnInsert: { userId, trackingId: payload.trackingId, createdAt: now },
+        // userId (creator) is set once on insert and never reassigned on later edits.
+        $setOnInsert: { userId: requestingUser.userId, trackingId: payload.trackingId, createdAt: now },
       },
       { upsert: true },
     );
+
+    return { ok: true };
   });
 }
 
@@ -163,19 +197,21 @@ export async function putSyncedChat(userId: string, payload: ChatSyncPayload, en
  * Looks a chat up by `trackingId` OR `urlId`. Chat URLs are `/chat/<urlId>`, so a link
  * opened on a second device arrives with the urlId — matching only on trackingId would
  * make every shared link miss.
+ *
+ * Access is enforced in application code rather than the Mongo filter: super_admin may
+ * read any chat, everyone else only their own (`canAccessChat`).
  */
 export async function getSyncedChat(
-  userId: string,
+  requestingUser: RequestingUser,
   trackingIdOrUrlId: string,
   env?: ServerEnv,
 ): Promise<ChatSyncRecord | null> {
   return withMongo(env, async (db) => {
-    // userId is part of the filter, so one user can never read another user's chat.
     const doc = await db
       .collection<SyncedChatDoc>(COLLECTION)
-      .findOne({ userId, $or: [{ trackingId: trackingIdOrUrlId }, { urlId: trackingIdOrUrlId }] });
+      .findOne({ $or: [{ trackingId: trackingIdOrUrlId }, { urlId: trackingIdOrUrlId }] });
 
-    if (!doc) {
+    if (!doc || !canAccessChat(requestingUser, doc.userId)) {
       return null;
     }
 
@@ -198,13 +234,18 @@ export async function getSyncedChat(
   });
 }
 
-/** Lightweight listing — deliberately excludes messages and file blobs. */
-export async function listSyncedChats(userId: string, env?: ServerEnv): Promise<ChatSyncSummary[]> {
+/**
+ * Lightweight listing — deliberately excludes messages and file blobs. super_admin sees
+ * every synced chat; everyone else sees only chats they created (mirrors `getChats` in
+ * project-tracker.server.ts).
+ */
+export async function listSyncedChats(requestingUser: RequestingUser, env?: ServerEnv): Promise<ChatSyncSummary[]> {
   return withMongo(env, async (db) => {
+    const filter = requestingUser.role === 'super_admin' ? {} : { userId: requestingUser.userId };
     const docs = await db
       .collection<SyncedChatDoc>(COLLECTION)
       .aggregate([
-        { $match: { userId } },
+        { $match: filter },
         {
           $project: {
             trackingId: 1,

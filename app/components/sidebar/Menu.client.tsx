@@ -7,6 +7,7 @@ import { ControlPanel } from '~/components/@settings/core/ControlPanel';
 import { SettingsButton } from '~/components/ui/SettingsButton';
 import { Button } from '~/components/ui/Button';
 import { db, deleteById, getAll, chatId, type ChatHistoryItem, useChatHistory } from '~/lib/persistence';
+import { deriveTrackingId, listRemoteChats } from '~/lib/persistence/chat-sync.client';
 import { cubicEasingFn } from '~/utils/easings';
 import { HistoryItem } from './HistoryItem';
 import { binDates } from './date-binning';
@@ -80,12 +81,36 @@ export const Menu = () => {
   });
 
   const loadEntries = useCallback(() => {
-    if (db) {
-      getAll(db)
-        .then((list) => list.filter((item) => item.urlId && item.description))
-        .then(setList)
-        .catch((error) => toast.error(error.message));
+    if (!db) {
+      return;
     }
+
+    Promise.all([
+      getAll(db).then((entries) => entries.filter((item) => item.urlId && item.description)),
+
+      // Chats synced to the DB from other devices — see chat-sync.client.ts.
+      listRemoteChats(),
+    ])
+      .then(([localList, remoteList]) => {
+        const localTrackingIds = new Set(
+          localList.map((item) => deriveTrackingId(item.messages)).filter((id): id is string => Boolean(id)),
+        );
+
+        // Only add remote chats this browser doesn't already have a local copy of.
+        const remoteOnly: ChatHistoryItem[] = remoteList
+          .filter((chat) => chat.urlId && chat.description && !localTrackingIds.has(chat.trackingId))
+          .map((chat) => ({
+            id: chat.urlId || chat.trackingId,
+            urlId: chat.urlId,
+            description: chat.description,
+            messages: [],
+            timestamp: chat.updatedAt,
+            isRemote: true,
+          }));
+
+        setList([...localList, ...remoteOnly]);
+      })
+      .catch((error) => toast.error(error.message));
   }, []);
 
   const deleteChat = useCallback(

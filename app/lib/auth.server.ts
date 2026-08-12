@@ -167,6 +167,24 @@ export async function requireAuth(request: Request, env?: ServerEnv): Promise<Au
 }
 
 /**
+ * Like requireAuth, but re-reads role/active from the database instead of trusting
+ * the JWT claim. Tokens live for 7 days, so a role change (e.g. promotion to
+ * super_admin, or deactivation) would otherwise not take effect until the holder's
+ * session happened to expire or they logged out and back in. Use this wherever the
+ * up-to-date role gates access to another user's data (chat-sync, /projects).
+ */
+export async function requireFreshAuth(request: Request, env?: ServerEnv): Promise<AuthUser> {
+  const user = await requireAuth(request, env);
+  const fresh = await findUserByEmail(user.email, env);
+
+  if (!fresh || !fresh.active) {
+    throw redirect('/login');
+  }
+
+  return { ...user, role: fresh.role, name: fresh.name };
+}
+
+/**
  * Returns the current user only if they are still a super admin *right now*.
  *
  * The role is re-read from the database rather than taken from the JWT: tokens

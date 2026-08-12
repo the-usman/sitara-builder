@@ -74,7 +74,7 @@ export function HistoryItem({
       )}
       onClick={selectionMode ? handleItemClick : undefined}
     >
-      {selectionMode && (
+      {selectionMode && !item.isRemote && (
         <div className="flex items-center mr-2" onClick={(e) => e.stopPropagation()}>
           <Checkbox
             id={`select-${item.id}`}
@@ -116,40 +116,42 @@ export function HistoryItem({
               'absolute right-0 top-0 bottom-0 flex items-center bg-transparent px-2 transition-colors',
             )}
           >
-            <div className="flex items-center gap-2.5 text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">
-              <ChatActionButton
-                toolTipContent="Export"
-                icon="i-ph:download-simple h-4 w-4"
-                onClick={(event) => {
-                  event.preventDefault();
-                  exportChat(item.id);
-                }}
-              />
-              {onDuplicate && (
+            {!item.isRemote && (
+              <div className="flex items-center gap-2.5 text-gray-400 dark:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity">
                 <ChatActionButton
-                  toolTipContent="Duplicate"
-                  icon="i-ph:copy h-4 w-4"
+                  toolTipContent="Export"
+                  icon="i-ph:download-simple h-4 w-4"
                   onClick={(event) => {
                     event.preventDefault();
-                    onDuplicate?.(item.id);
+                    exportChat(item.id);
                   }}
                 />
-              )}
-              <ChatActionButton
-                toolTipContent="Rename"
-                icon="i-ph:pencil-fill h-4 w-4"
-                onClick={(event) => {
-                  event.preventDefault();
-                  toggleEditMode();
-                }}
-              />
-              <ChatActionButton
-                toolTipContent="Delete"
-                icon="i-ph:trash h-4 w-4"
-                className="hover:text-red-500 dark:hover:text-red-400"
-                onClick={handleDeleteClick}
-              />
-            </div>
+                {onDuplicate && (
+                  <ChatActionButton
+                    toolTipContent="Duplicate"
+                    icon="i-ph:copy h-4 w-4"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onDuplicate?.(item.id);
+                    }}
+                  />
+                )}
+                <ChatActionButton
+                  toolTipContent="Rename"
+                  icon="i-ph:pencil-fill h-4 w-4"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    toggleEditMode();
+                  }}
+                />
+                <ChatActionButton
+                  toolTipContent="Delete"
+                  icon="i-ph:trash h-4 w-4"
+                  className="hover:text-red-500 dark:hover:text-red-400"
+                  onClick={handleDeleteClick}
+                />
+              </div>
+            )}
           </div>
         </a>
       )}

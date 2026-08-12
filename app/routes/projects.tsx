@@ -1,11 +1,11 @@
 import { json, type LoaderFunctionArgs } from '@remix-run/cloudflare';
 import { useLoaderData } from '@remix-run/react';
-import { requireAuth } from '~/lib/auth.server';
+import { requireFreshAuth } from '~/lib/auth.server';
 import { getChats, type ChatRecord } from '~/lib/project-tracker.server';
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
   const env = (context as any).cloudflare?.env;
-  const user = await requireAuth(request, env);
+  const user = await requireFreshAuth(request, env);
   const chats = await getChats(user.userId, user.role, env);
 
   return json({ chats, role: user.role });
