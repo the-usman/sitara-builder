@@ -121,14 +121,15 @@ export default function ChatsPage() {
                   >
                     <td className="px-4 py-3">
                       {/*
-                       * Prefer clientChatId (the IndexedDB chat ID), but fall back to
-                       * trackingId — clientChatId is often never recorded, because a new
-                       * chat has no IndexedDB row until after its first response. The chat
-                       * route resolves a trackingId against local chats first, then against
-                       * synced history, so this link works on any device.
+                       * Always link by trackingId — it's the one identifier guaranteed
+                       * unique across every device/account (the first user message's id).
+                       * clientChatId (the local IndexedDB row id) is per-browser and can
+                       * collide or be missing entirely; the chat route already resolves
+                       * trackingId against local chats first, then synced history, so this
+                       * link works everywhere.
                        */}
                       <a
-                        href={`/chat/${c.clientChatId || c.trackingId}`}
+                        href={`/chat/${c.trackingId}`}
                         className="font-medium text-white hover:text-purple-300 transition-colors"
                       >
                         {c.name || c.trackingId}
