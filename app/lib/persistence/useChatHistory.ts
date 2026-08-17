@@ -20,7 +20,7 @@ import {
 } from './db';
 import type { FileMap } from '~/lib/stores/files';
 import type { Snapshot } from './types';
-import { deriveTrackingId, pullChat, schedulePush } from './chat-sync.client';
+import { cancelPendingPush, deriveTrackingId, pullChat, pushChat, schedulePush } from './chat-sync.client';
 import { webcontainer } from '~/lib/webcontainer';
 import { detectProjectCommands, createCommandActionsString } from '~/utils/projectCommands';
 import type { ContextAnnotation } from '~/types/context';
@@ -378,7 +378,7 @@ ${value.content}
         console.error(error);
       }
     },
-    storeMessageHistory: async (messages: Message[]) => {
+    storeMessageHistory: async (messages: Message[], options?: { immediate?: boolean }) => {
       if (!db || messages.length === 0) {
         return;
       }
@@ -463,14 +463,25 @@ ${value.content}
       const trackingId = deriveTrackingId(allMessages);
 
       if (trackingId) {
-        schedulePush({
+        const pushArgs = {
           trackingId,
           urlId: _urlId ?? urlId,
           description: description.get(),
           messages: allMessages,
           metadata: chatMetadata.get(),
           snapshot,
-        });
+        };
+
+        if (options?.immediate) {
+          /*
+           * A response just finished — push the file snapshot now instead of waiting
+           * out the debounce, so the server copy never trails a completed turn.
+           */
+          cancelPendingPush(trackingId);
+          void pushChat(pushArgs);
+        } else {
+          schedulePush(pushArgs);
+        }
       }
     },
     duplicateCurrentChat: async (listItemId: string) => {

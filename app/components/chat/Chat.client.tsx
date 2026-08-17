@@ -104,7 +104,7 @@ const processSampledMessages = createSampler(
     initialMessages: Message[];
     isLoading: boolean;
     parseMessages: (messages: Message[], isLoading: boolean) => void;
-    storeMessageHistory: (messages: Message[]) => Promise<void>;
+    storeMessageHistory: (messages: Message[], options?: { immediate?: boolean }) => Promise<void>;
   }) => {
     const { messages, initialMessages, isLoading, parseMessages, storeMessageHistory } = options;
     parseMessages(messages, isLoading);
@@ -118,7 +118,7 @@ const processSampledMessages = createSampler(
 
 interface ChatProps {
   initialMessages: Message[];
-  storeMessageHistory: (messages: Message[]) => Promise<void>;
+  storeMessageHistory: (messages: Message[], options?: { immediate?: boolean }) => Promise<void>;
   importChat: (description: string, messages: Message[]) => Promise<void>;
   exportChat: () => void;
   description?: string;
@@ -314,6 +314,8 @@ export const ChatImpl = memo(
       chatStore.setKey('started', initialMessages.length > 0);
     }, []);
 
+    const wasLoadingRef = useRef(false);
+
     useEffect(() => {
       processSampledMessages({
         messages,
@@ -322,6 +324,16 @@ export const ChatImpl = memo(
         parseMessages,
         storeMessageHistory,
       });
+
+      /*
+       * Response just finished streaming: push the file snapshot now rather than
+       * leaving it to the sampler's debounce, so the server copy is never stale.
+       */
+      if (wasLoadingRef.current && !isLoading && messages.length > initialMessages.length) {
+        storeMessageHistory(messages, { immediate: true }).catch((error) => toast.error(error.message));
+      }
+
+      wasLoadingRef.current = isLoading;
     }, [messages, isLoading, parseMessages]);
 
     const scrollTextArea = () => {
@@ -405,7 +417,7 @@ export const ChatImpl = memo(
 
       const imageFilesNote =
         uploadedFiles.length > 0
-          ? `\n\n[Uploaded images have been automatically saved to the project's public/ folder: ${uploadedFiles.map((f) => `public/${f.name}`).join(', ')}. Reference them in your code using these paths.]`
+          ? `\n\n[Uploaded files have been automatically saved to the project's public/ folder: ${uploadedFiles.map((f) => `public/${f.name}`).join(', ')}. Reference them in your code using these paths — images via <img>, videos via <video>.]`
           : '';
 
       runAnimation();
@@ -444,7 +456,7 @@ export const ChatImpl = memo(
                       type: 'text',
                       text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
                     },
-                    ...imageDataList.map((imageData) => ({
+                    ...imageDataList.filter(Boolean).map((imageData) => ({
                       type: 'image',
                       image: imageData,
                     })),
@@ -492,7 +504,7 @@ export const ChatImpl = memo(
                 type: 'text',
                 text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
               },
-              ...imageDataList.map((imageData) => ({
+              ...imageDataList.filter(Boolean).map((imageData) => ({
                 type: 'image',
                 image: imageData,
               })),
@@ -533,7 +545,7 @@ export const ChatImpl = memo(
                 type: 'text',
                 text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}`,
               },
-              ...imageDataList.map((imageData) => ({
+              ...imageDataList.filter(Boolean).map((imageData) => ({
                 type: 'image',
                 image: imageData,
               })),
@@ -552,7 +564,7 @@ export const ChatImpl = memo(
                 type: 'text',
                 text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
               },
-              ...imageDataList.map((imageData) => ({
+              ...imageDataList.filter(Boolean).map((imageData) => ({
                 type: 'image',
                 image: imageData,
               })),

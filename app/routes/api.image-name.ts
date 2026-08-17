@@ -36,7 +36,11 @@ export async function action({ context, request }: ActionFunctionArgs) {
       providerSettings,
     });
 
-    const raw = await result.text;
+    // Naming is cosmetic — bound how long a stalled provider can hold up the response.
+    const raw = await Promise.race([
+      result.text,
+      new Promise<string>((_, reject) => setTimeout(() => reject(new Error('image-name timeout')), 8000)),
+    ]);
     const filename =
       raw
         .trim()

@@ -51,6 +51,7 @@ import { UserTemplates } from '~/components/templates/UserTemplates';
 import { SaveTemplateModal } from '~/components/templates/SaveTemplateModal';
 
 const TEXTAREA_MIN_HEIGHT = 76;
+const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 
 interface BaseChatProps {
   textareaRef?: React.RefObject<HTMLTextAreaElement> | undefined;
@@ -295,20 +296,27 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const handleFileUpload = () => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'image/*';
+      input.accept = 'image/*,video/*';
 
       input.onchange = async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
 
-        if (file) {
-          const reader = new FileReader();
-
-          reader.onload = async (ev) => {
-            const base64Image = ev.target?.result as string;
-            await saveImageToProject(file, base64Image);
-          };
-          reader.readAsDataURL(file);
+        if (!file) {
+          return;
         }
+
+        if (file.type.startsWith('video/')) {
+          await saveVideoToProject(file);
+          return;
+        }
+
+        const reader = new FileReader();
+
+        reader.onload = async (ev) => {
+          const base64Image = ev.target?.result as string;
+          await saveImageToProject(file, base64Image);
+        };
+        reader.readAsDataURL(file);
       };
 
       input.click();
@@ -343,12 +351,22 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     };
 
     const getAiFilename = async (base64DataUrl: string): Promise<string> => {
+      /*
+       * The AI name is cosmetic — never let a slow/hung model call block the actual
+       * upload. Without this, a stalled fetch (non-vision model, provider hiccup)
+       * left the "AI is naming your image…" toast stuck forever and the file was
+       * never saved until the user retried.
+       */
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+
       try {
         const base64 = base64DataUrl.split(',')[1];
         const res = await fetch('/api/image-name', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ imageData: base64, model, provider }),
+          signal: controller.signal,
         });
 
         if (res.ok) {
@@ -357,6 +375,8 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
         }
       } catch (_e) {
         // fallthrough to default
+      } finally {
+        clearTimeout(timeout);
       }
 
       return 'uploaded-image';
@@ -389,6 +409,62 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
         console.error('Failed to save image to project:', error);
         toast.update(toastId, {
           render: 'Failed to save image',
+          type: 'error',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      }
+    };
+
+    /*
+     * Slug-only filename, mirroring the shape api.image-name.ts returns for images —
+     * there's no AI naming step here since vision models can't watch a video.
+     */
+    const slugifyFilename = (name: string, fallbackExt: string): string => {
+      const dot = name.lastIndexOf('.');
+      const base = dot > 0 ? name.slice(0, dot) : name;
+      const ext = (dot > 0 ? name.slice(dot + 1) : fallbackExt).toLowerCase();
+      const slug = base
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+      return `${slug || 'video'}.${ext}`;
+    };
+
+    const saveVideoToProject = async (file: File) => {
+      if (file.size > MAX_VIDEO_SIZE_BYTES) {
+        toast.error(`Video is too large (max ${MAX_VIDEO_SIZE_BYTES / (1024 * 1024)}MB).`);
+        return;
+      }
+
+      const toastId = toast.loading('Saving video…');
+
+      try {
+        const filename = slugifyFilename(file.name, 'mp4');
+        const renamedFile = new File([file], filename, { type: file.type });
+
+        /*
+         * No data-URL entry: imageDataList stays aligned by index with uploadedFiles,
+         * and an empty slot tells the message builder (and FilePreview) this slot is a
+         * video rather than something to send to the model as an image content part.
+         */
+        setUploadedFiles?.([...uploadedFiles, renamedFile]);
+        setImageDataList?.([...imageDataList, '']);
+
+        const arrayBuffer = await file.arrayBuffer();
+        await workbenchStore.createFile(`${WORK_DIR}/public/${filename}`, new Uint8Array(arrayBuffer));
+
+        toast.update(toastId, {
+          render: `Saved as public/${filename}`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 3000,
+        });
+      } catch (error) {
+        console.error('Failed to save video to project:', error);
+        toast.update(toastId, {
+          render: 'Failed to save video',
           type: 'error',
           isLoading: false,
           autoClose: 3000,
@@ -589,6 +665,11 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
 
                         const files = Array.from(e.dataTransfer.files);
                         files.forEach((file) => {
+                          if (file.type.startsWith('video/')) {
+                            void saveVideoToProject(file);
+                            return;
+                          }
+
                           if (file.type.startsWith('image/')) {
                             const reader = new FileReader();
 
@@ -654,7 +735,11 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                     </ClientOnly>
                     <div className="flex justify-between items-center text-sm p-4 pt-2">
                       <div className="flex gap-1 items-center">
-                        <IconButton title="Upload file" className="transition-all" onClick={() => handleFileUpload()}>
+                        <IconButton
+                          title="Upload image or video"
+                          className="transition-all"
+                          onClick={() => handleFileUpload()}
+                        >
                           <div className="i-ph:paperclip text-xl"></div>
                         </IconButton>
                         <IconButton

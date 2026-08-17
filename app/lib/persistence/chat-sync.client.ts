@@ -166,6 +166,16 @@ export function schedulePush(args: PushChatArgs): void {
   );
 }
 
+/** Drops a chat's pending debounced push, e.g. because it's about to be superseded by an immediate one. */
+export function cancelPendingPush(trackingId: string): void {
+  const existing = pendingPushes.get(trackingId);
+
+  if (existing) {
+    clearTimeout(existing);
+    pendingPushes.delete(trackingId);
+  }
+}
+
 /** Fetches one chat, decompressing the snapshot. Returns null when absent or on error. */
 export async function pullChat(trackingId: string): Promise<RemoteChat | null> {
   if (!isSyncSupported()) {
