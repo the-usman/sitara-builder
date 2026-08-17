@@ -296,7 +296,13 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     const handleFileUpload = () => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'image/*,video/*';
+
+      /*
+       * MIME wildcards alone (`video/*`) are unreliable in the Windows native file
+       * picker — files like .mp4 can show up greyed out. Listing extensions
+       * explicitly alongside the wildcards fixes that.
+       */
+      input.accept = 'image/*,video/*,.png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.mov,.webm,.avi,.mkv,.m4v';
 
       input.onchange = async (e) => {
         const file = (e.target as HTMLInputElement).files?.[0];
