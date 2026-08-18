@@ -46,6 +46,7 @@ import { useStore } from '@nanostores/react';
 import { StickToBottom, useStickToBottomContext } from '~/lib/hooks';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { WORK_DIR } from '~/utils/constants';
+import { persistFileSnapshot } from '~/lib/persistence/useChatHistory';
 import { ImageGenerateModal } from './ImageGenerateModal';
 import { UserTemplates } from '~/components/templates/UserTemplates';
 import { SaveTemplateModal } from '~/components/templates/SaveTemplateModal';
@@ -356,50 +357,28 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       }
     };
 
-    const getAiFilename = async (base64DataUrl: string): Promise<string> => {
-      /*
-       * The AI name is cosmetic — never let a slow/hung model call block the actual
-       * upload. Without this, a stalled fetch (non-vision model, provider hiccup)
-       * left the "AI is naming your image…" toast stuck forever and the file was
-       * never saved until the user retried.
-       */
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-
-      try {
-        const base64 = base64DataUrl.split(',')[1];
-        const res = await fetch('/api/image-name', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageData: base64, model, provider }),
-          signal: controller.signal,
-        });
-
-        if (res.ok) {
-          const json = (await res.json()) as any;
-          return (json.filename as string) || 'uploaded-image';
-        }
-      } catch (_e) {
-        // fallthrough to default
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      return 'uploaded-image';
-    };
-
     const saveImageToProject = async (file: File, base64Image: string) => {
       /*
-       * Vision models can't read SVG (it's not a raster format they accept), so the AI
-       * naming call is guaranteed to fail/time out for one — skip straight to a slugified
-       * name instead of making the user wait 8s for a call that can't succeed.
+       * Only SVGs are treated as a real site asset (per the earlier "let SVGs be used in
+       * the website" request) — every other image dropped into chat is reference/feedback
+       * for the AI to look at (a screenshot, a design mock, a bug repro). It still gets
+       * sent to the model as vision input via imageDataList, it just never gets written
+       * into public/ or persisted as a project file.
        */
       const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
-      const toastId = toast.loading(isSvg ? 'Saving image…' : 'AI is naming your image…');
+
+      if (!isSvg) {
+        setUploadedFiles?.([...uploadedFiles, file]);
+        setImageDataList?.([...imageDataList, base64Image]);
+
+        return;
+      }
+
+      const toastId = toast.loading('Saving image…');
 
       try {
-        const aiName = isSvg ? slugifyBaseName(file.name) || 'image' : await getAiFilename(base64Image);
-        const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+        const aiName = slugifyBaseName(file.name) || 'image';
+        const ext = (file.name.split('.').pop() || 'svg').toLowerCase();
         const filename = `${aiName}-${uniqueFileSuffix()}.${ext}`;
 
         // Rename the File object so the AI message shows the correct name
@@ -410,6 +389,8 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
         // Write to WebContainer public/ folder
         const arrayBuffer = await file.arrayBuffer();
         await workbenchStore.createFile(`${WORK_DIR}/public/${filename}`, new Uint8Array(arrayBuffer));
+
+        void persistFileSnapshot();
 
         toast.update(toastId, {
           render: `Saved as public/${filename}`,
@@ -486,6 +467,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
 
         const arrayBuffer = await file.arrayBuffer();
         await workbenchStore.createFile(`${WORK_DIR}/public/${filename}`, new Uint8Array(arrayBuffer));
+        void persistFileSnapshot();
 
         toast.update(toastId, {
           render: `Saved as public/${filename}`,

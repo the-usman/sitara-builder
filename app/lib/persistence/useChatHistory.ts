@@ -49,6 +49,61 @@ export const db = persistenceEnabled ? await openDatabase() : undefined;
 export const chatId = atom<string | undefined>(undefined);
 export const description = atom<string | undefined>(undefined);
 export const chatMetadata = atom<IChatMetadata | undefined>(undefined);
+
+/*
+ * Normally a new snapshot is only taken as a side effect of `storeMessageHistory`, which
+ * only runs when the message list changes. A file written outside that flow — a manual
+ * upload in the File Explorer, or an image/video/svg saved during a chat turn — never
+ * triggers it, so a project where the *only* thing that happened after chat started was
+ * a direct upload has no snapshot capturing that file: not locally, and nothing was ever
+ * pushed to the server either. That's what made it vanish on reload with no server copy
+ * to fall back to. Call this right after any such write so both copies stay current.
+ */
+export async function persistFileSnapshot(): Promise<void> {
+  const id = chatId.get();
+
+  if (!id || !db) {
+    return;
+  }
+
+  let stored;
+
+  try {
+    stored = await getMessages(db, id);
+  } catch (error) {
+    console.error('Failed to load messages for file snapshot:', error);
+    return;
+  }
+
+  const messages = stored?.messages ?? [];
+  const lastMessageId = messages.length > 0 ? messages[messages.length - 1].id : '';
+
+  const snapshot: Snapshot = {
+    chatIndex: lastMessageId,
+    files: workbenchStore.files.get(),
+  };
+
+  try {
+    await setSnapshot(db, id, snapshot);
+  } catch (error) {
+    console.error('Failed to save file snapshot locally:', error);
+    return;
+  }
+
+  const trackingId = deriveTrackingId(messages);
+
+  if (trackingId) {
+    void pushChat({
+      trackingId,
+      urlId: stored?.urlId,
+      description: stored?.description ?? description.get(),
+      messages,
+      metadata: stored?.metadata ?? chatMetadata.get(),
+      snapshot,
+    });
+  }
+}
+
 export function useChatHistory() {
   const navigate = useNavigate();
   const { id: mixedId } = useLoaderData<{ id?: string }>();

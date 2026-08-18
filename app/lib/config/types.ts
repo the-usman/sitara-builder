@@ -5,7 +5,7 @@
  * masked types from here, and the server modules import the full ones.
  */
 
-export type ConfigProvider = 'github' | 'vercel' | 'netlify' | 'supabase';
+export type ConfigProvider = 'github' | 'vercel' | 'netlify' | 'supabase' | 'cloudinary';
 
 export interface GithubConfig {
   token: string;
@@ -34,12 +34,24 @@ export interface SupabaseConfig {
   credentials?: SupabaseCredentialsConfig;
 }
 
+export interface CloudinaryConfig {
+  cloudName: string;
+
+  /** Not secret on its own — Cloudinary's API key is meant to accompany a signed request. */
+  apiKey: string;
+
+  /** The actual secret: signs uploads server-side, never sent to the browser. */
+  apiSecret: string;
+  label?: string;
+}
+
 /** Full config, including plaintext secrets. Never send this to a non-admin. */
 export interface AppConfig {
   github: GithubConfig;
   vercel: TokenConfig;
   netlify: TokenConfig;
   supabase: SupabaseConfig;
+  cloudinary: CloudinaryConfig;
 
   /** LLM provider name (e.g. "Anthropic") to API key. */
   apiKeys: Record<string, string>;
@@ -72,6 +84,7 @@ export interface AppConfigStatus {
   vercel: ConfigProviderStatus;
   netlify: ConfigProviderStatus;
   supabase: SupabaseConfigStatus;
+  cloudinary: ConfigProviderStatus;
 
   /** Provider name to whether a key is set. Values are never included. */
   apiKeys: Record<string, boolean>;
@@ -87,5 +100,6 @@ export const EMPTY_APP_CONFIG: AppConfig = {
   vercel: { token: '' },
   netlify: { token: '' },
   supabase: { token: '' },
+  cloudinary: { cloudName: '', apiKey: '', apiSecret: '' },
   apiKeys: {},
 };

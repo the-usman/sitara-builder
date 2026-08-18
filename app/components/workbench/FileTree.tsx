@@ -8,6 +8,7 @@ import { diffLines, type Change } from 'diff';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { toast } from 'react-toastify';
 import { path } from '~/utils/path';
+import { persistFileSnapshot } from '~/lib/persistence/useChatHistory';
 
 const logger = createScopedLogger('FileTree');
 
@@ -336,6 +337,7 @@ function FileContextMenu({
 
             if (success) {
               toast.success(`File ${file.name} uploaded successfully`);
+              void persistFileSnapshot();
             } else {
               toast.error(`Failed to upload file ${file.name}`);
             }
@@ -371,6 +373,7 @@ function FileContextMenu({
 
         if (success) {
           toast.success(`File ${file.name} uploaded successfully`);
+          void persistFileSnapshot();
         } else {
           toast.error(`Failed to upload file ${file.name}`);
         }
@@ -382,6 +385,66 @@ function FileContextMenu({
 
     input.click();
   }, [targetPath]);
+
+  /*
+   * Uploads straight to the shared, admin-managed Cloudinary account — separate from
+   * "Upload File" above, this never touches the project's own file tree. It only ever
+   * produces a hosted URL, copied to the clipboard for pasting into a prompt or code.
+   */
+  const handleUploadToCloudinary = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+
+      if (!file) {
+        return;
+      }
+
+      const toastId = toast.loading(`Uploading ${file.name} to Cloudinary…`);
+
+      try {
+        const formData = new FormData();
+        formData.set('file', file);
+
+        const response = await fetch('/api/cloudinary-upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = (await response.json()) as { url?: string; error?: string };
+
+        if (!response.ok || !data.url) {
+          toast.update(toastId, {
+            render: data.error || `Failed to upload ${file.name} to Cloudinary`,
+            type: 'error',
+            isLoading: false,
+            autoClose: 4000,
+          });
+          return;
+        }
+
+        await navigator.clipboard.writeText(data.url);
+        toast.update(toastId, {
+          render: `Uploaded — URL copied to clipboard: ${data.url}`,
+          type: 'success',
+          isLoading: false,
+          autoClose: 5000,
+        });
+      } catch (error) {
+        toast.update(toastId, {
+          render: `Error uploading ${file.name} to Cloudinary`,
+          type: 'error',
+          isLoading: false,
+          autoClose: 4000,
+        });
+        logger.error(error);
+      }
+    };
+
+    input.click();
+  }, []);
 
   const handleCreateFile = async (fileName: string) => {
     const newFilePath = path.join(targetPath, fileName);
@@ -552,6 +615,12 @@ function FileContextMenu({
                 <div className="flex items-center gap-2">
                   <div className="i-ph:upload-simple" />
                   Upload File
+                </div>
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={handleUploadToCloudinary}>
+                <div className="flex items-center gap-2">
+                  <div className="i-ph:cloud-arrow-up" />
+                  Upload to Cloudinary
                 </div>
               </ContextMenuItem>
             </ContextMenu.Group>

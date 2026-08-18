@@ -4,6 +4,7 @@ import {
   EMPTY_APP_CONFIG,
   type AppConfig,
   type AppConfigStatus,
+  type CloudinaryConfig,
   type ConfigProviderStatus,
   type GithubConfig,
   type SupabaseConfig,
@@ -19,6 +20,7 @@ interface AppConfigDoc {
   vercel?: TokenConfig;
   netlify?: TokenConfig;
   supabase?: SupabaseConfig;
+  cloudinary?: CloudinaryConfig;
   apiKeys?: Record<string, string>;
   updatedAt?: Date;
   updatedBy?: string;
@@ -34,6 +36,7 @@ export type AppConfigPatch = {
   vercel?: Partial<TokenConfig>;
   netlify?: Partial<TokenConfig>;
   supabase?: Partial<SupabaseConfig>;
+  cloudinary?: Partial<CloudinaryConfig>;
   apiKeys?: Record<string, string>;
 };
 
@@ -43,6 +46,45 @@ function decryptToken<T extends { token: string }>(stored: T | undefined, fallba
   }
 
   return { ...stored, token: decryptSecret(stored.token || '', env) };
+}
+
+/*
+ * Cloudinary doesn't fit the single-`token` shape the helpers above assume — only
+ * `apiSecret` is a true secret (Cloudinary's cloud name and API key are meant to be
+ * paired with a signature, not kept confidential on their own), so it gets its own
+ * small set of encrypt/decrypt/merge/status functions instead of reusing `mergeToken`.
+ */
+function decryptCloudinary(stored: CloudinaryConfig | undefined, env?: ServerEnv): CloudinaryConfig {
+  if (!stored) {
+    return EMPTY_APP_CONFIG.cloudinary;
+  }
+
+  return { ...stored, apiSecret: decryptSecret(stored.apiSecret || '', env) };
+}
+
+function mergeCloudinary(current: CloudinaryConfig, patch: Partial<CloudinaryConfig> | undefined): CloudinaryConfig {
+  if (!patch) {
+    return current;
+  }
+
+  return {
+    cloudName: patch.cloudName === undefined ? current.cloudName : patch.cloudName,
+    apiKey: patch.apiKey === undefined ? current.apiKey : patch.apiKey,
+    apiSecret: patch.apiSecret === undefined ? current.apiSecret : patch.apiSecret,
+    label: patch.label === undefined ? current.label : patch.label,
+  };
+}
+
+function encryptCloudinary(value: CloudinaryConfig, env?: ServerEnv): CloudinaryConfig {
+  return { ...value, apiSecret: encryptSecret(value.apiSecret || '', env) };
+}
+
+function cloudinaryStatus(value: CloudinaryConfig): ConfigProviderStatus {
+  return {
+    configured: Boolean(value.cloudName && value.apiKey && value.apiSecret),
+    label: value.label || value.cloudName || undefined,
+    hint: value.apiSecret ? secretHint(value.apiSecret) : undefined,
+  };
 }
 
 /**
@@ -67,6 +109,7 @@ export async function readAppConfig(env?: ServerEnv): Promise<AppConfig> {
     vercel: decryptToken(doc.vercel, EMPTY_APP_CONFIG.vercel, env),
     netlify: decryptToken(doc.netlify, EMPTY_APP_CONFIG.netlify, env),
     supabase: decryptToken(doc.supabase, EMPTY_APP_CONFIG.supabase, env),
+    cloudinary: decryptCloudinary(doc.cloudinary, env),
     apiKeys,
     updatedAt: doc.updatedAt?.toISOString(),
     updatedBy: doc.updatedBy,
@@ -102,6 +145,7 @@ export async function writeAppConfig(patch: AppConfigPatch, actorEmail: string, 
     vercel: mergeToken(current.vercel, patch.vercel),
     netlify: mergeToken(current.netlify, patch.netlify),
     supabase: mergeToken(current.supabase, patch.supabase),
+    cloudinary: mergeCloudinary(current.cloudinary, patch.cloudinary),
     apiKeys: { ...current.apiKeys, ...(patch.apiKeys ?? {}) },
   };
 
@@ -129,6 +173,7 @@ export async function writeAppConfig(patch: AppConfigPatch, actorEmail: string, 
           vercel: encryptToken(merged.vercel, env),
           netlify: encryptToken(merged.netlify, env),
           supabase: encryptToken(merged.supabase, env),
+          cloudinary: encryptCloudinary(merged.cloudinary, env),
           apiKeys: encryptedApiKeys,
           updatedAt,
           updatedBy: actorEmail,
@@ -169,6 +214,7 @@ export function toStatus(config: AppConfig, canEdit: boolean): AppConfigStatus {
       selectedProjectId: config.supabase.selectedProjectId,
       credentials: config.supabase.credentials,
     },
+    cloudinary: cloudinaryStatus(config.cloudinary),
     apiKeys,
     updatedAt: config.updatedAt,
     updatedBy: config.updatedBy,

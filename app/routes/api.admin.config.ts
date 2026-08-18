@@ -45,6 +45,14 @@ const patchSchema = z.object({
         .optional(),
     })
     .optional(),
+  cloudinary: z
+    .object({
+      cloudName: z.string().max(200).optional(),
+      apiKey: z.string().max(200).optional(),
+      apiSecret: z.string().max(200).optional(),
+      label: z.string().max(200).optional(),
+    })
+    .optional(),
   apiKeys: z.record(z.string(), z.string()).optional(),
 });
 

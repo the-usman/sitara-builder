@@ -83,6 +83,7 @@ export default function ManagedConnectionsSummary() {
       status: status.supabase,
       detail: status.supabase.label || status.supabase.selectedProjectId,
     },
+    { key: 'cloudinary', name: 'Cloudinary', icon: 'i-ph:cloud-arrow-up', status: status.cloudinary },
     {
       key: 'llm',
       name: 'AI providers',

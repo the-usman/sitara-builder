@@ -122,6 +122,15 @@ const processSampledMessages = createSampler(
  * Videos are already excluded (empty imageDataList slot); SVGs need the same treatment
  * even though their slot is non-empty, since they still render fine as an <img> preview.
  */
+/*
+ * Only videos and SVGs are ever written into public/ (see BaseChat.tsx#saveImageToProject) —
+ * every other uploaded image is feedback/reference for the AI to look at, not a project file,
+ * so it shouldn't be listed as a `public/...` path the AI can reference in code.
+ */
+function isSavedProjectAsset(file: File): boolean {
+  return file.type.startsWith('video/') || file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+}
+
 function toVisionImageParts(uploadedFiles: File[], imageDataList: string[]): Array<{ type: 'image'; image: string }> {
   return uploadedFiles.reduce<Array<{ type: 'image'; image: string }>>((parts, file, index) => {
     const dataUrl = imageDataList[index];
@@ -434,9 +443,10 @@ export const ChatImpl = memo(
       // If no locked items, proceed normally with the original message
       const finalMessageContent = messageContent;
 
+      const savedAssetPaths = uploadedFiles.filter(isSavedProjectAsset).map((f) => `public/${f.name}`);
       const imageFilesNote =
-        uploadedFiles.length > 0
-          ? `\n\n[Uploaded files have been automatically saved to the project's public/ folder: ${uploadedFiles.map((f) => `public/${f.name}`).join(', ')}. Reference them in your code using these paths — images via <img>, videos via <video>.]`
+        savedAssetPaths.length > 0
+          ? `\n\n[Uploaded files have been automatically saved to the project's public/ folder: ${savedAssetPaths.join(', ')}. Reference them in your code using these paths — images via <img>, videos via <video>.]`
           : '';
 
       runAnimation();
