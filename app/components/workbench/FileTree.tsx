@@ -8,7 +8,9 @@ import { diffLines, type Change } from 'diff';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { toast } from 'react-toastify';
 import { path } from '~/utils/path';
-import { persistFileSnapshot } from '~/lib/persistence/useChatHistory';
+import { chatId, persistFileSnapshot } from '~/lib/persistence/useChatHistory';
+import { recordCloudinaryUploadLocally } from '~/lib/persistence/cloudinary-uploads.client';
+import { WORK_DIR } from '~/utils/constants';
 
 const logger = createScopedLogger('FileTree');
 
@@ -387,9 +389,12 @@ function FileContextMenu({
   }, [targetPath]);
 
   /*
-   * Uploads straight to the shared, admin-managed Cloudinary account — separate from
-   * "Upload File" above, this never touches the project's own file tree. It only ever
-   * produces a hosted URL, copied to the clipboard for pasting into a prompt or code.
+   * Uploads to the shared, admin-managed Cloudinary account. Unlike a throwaway
+   * fire-and-forget action, three things persist afterward: the server records the
+   * upload in Mongo (recordCloudinaryUpload), the browser mirrors it into localStorage
+   * for instant local history, and the file itself is written into this project's
+   * public/ folder (created if it doesn't exist yet) so it shows up in the file tree
+   * and survives a reload, same as any other uploaded asset.
    */
   const handleUploadToCloudinary = useCallback(() => {
     const input = document.createElement('input');
@@ -405,17 +410,23 @@ function FileContextMenu({
       const toastId = toast.loading(`Uploading ${file.name} to Cloudinary…`);
 
       try {
+        const currentChatId = chatId.get();
+
         const formData = new FormData();
         formData.set('file', file);
+
+        if (currentChatId) {
+          formData.set('trackingId', currentChatId);
+        }
 
         const response = await fetch('/api/cloudinary-upload', {
           method: 'POST',
           body: formData,
         });
 
-        const data = (await response.json()) as { url?: string; error?: string };
+        const data = (await response.json()) as { url?: string; publicId?: string; error?: string };
 
-        if (!response.ok || !data.url) {
+        if (!response.ok || !data.url || !data.publicId) {
           toast.update(toastId, {
             render: data.error || `Failed to upload ${file.name} to Cloudinary`,
             type: 'error',
@@ -425,26 +436,36 @@ function FileContextMenu({
           return;
         }
 
+        const publicFilePath = path.join(`${WORK_DIR}/public`, file.name);
+        const arrayBuffer = await file.arrayBuffer();
+        await workbenchStore.createFile(publicFilePath, new Uint8Array(arrayBuffer));
+        void persistFileSnapshot();
+
+        recordCloudinaryUploadLocally({
+          url: data.url,
+          publicId: data.publicId,
+          filename: file.name,
+          uploadedAt: new Date().toISOString(),
+        });
+
         /*
-         * The upload already succeeded by this point — clipboard access is a separate
-         * concern (it throws if the page lost focus during the wait, e.g. the user
-         * switched tabs) and must never turn a successful upload into a reported failure.
+         * The upload already succeeded by this point — report it right away. Clipboard
+         * access is a best-effort side action, not awaited: on some browsers, writeText()
+         * neither resolves nor rejects when the page lost focus during the wait (e.g. the
+         * user switched tabs) — it just hangs forever, which previously left this toast
+         * stuck on "loading" indefinitely even though the upload had already finished.
          */
-        let copied = true;
-
-        try {
-          await navigator.clipboard.writeText(data.url);
-        } catch (clipboardError) {
-          copied = false;
-          logger.error(clipboardError);
-        }
-
         toast.update(toastId, {
-          render: copied ? `Uploaded — URL copied to clipboard: ${data.url}` : `Uploaded: ${data.url}`,
+          render: `Uploaded and saved as public/${file.name}: ${data.url}`,
           type: 'success',
           isLoading: false,
           autoClose: 5000,
         });
+
+        navigator.clipboard.writeText(data.url).then(
+          () => toast.info('URL copied to clipboard', { autoClose: 2000 }),
+          (clipboardError) => logger.error(clipboardError),
+        );
       } catch (error) {
         toast.update(toastId, {
           render: `Error uploading ${file.name} to Cloudinary`,

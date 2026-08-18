@@ -1,6 +1,7 @@
-import { type ActionFunctionArgs, json } from '@remix-run/cloudflare';
+import { type ActionFunctionArgs, type LoaderFunctionArgs, json } from '@remix-run/cloudflare';
 import { requireAuth } from '~/lib/auth.server';
 import { requireCloudinaryConfig } from '~/lib/config/provider-tokens.server';
+import { listCloudinaryUploads, recordCloudinaryUpload } from '~/lib/cloudinary-uploads.server';
 
 async function sha1Hex(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
@@ -8,6 +9,17 @@ async function sha1Hex(message: string): Promise<string> {
   const hashArray = Array.from(new Uint8Array(hashBuffer));
 
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** GET /api/cloudinary-upload?trackingId=x — recent uploads (own, or all for super_admin). */
+export async function loader({ request, context }: LoaderFunctionArgs) {
+  const env = (context as any).cloudflare?.env;
+  const user = await requireAuth(request, env);
+
+  const trackingId = new URL(request.url).searchParams.get('trackingId') || undefined;
+  const uploads = await listCloudinaryUploads({ userId: user.userId, role: user.role }, trackingId, env);
+
+  return json({ uploads });
 }
 
 /**
@@ -18,7 +30,7 @@ async function sha1Hex(message: string): Promise<string> {
  */
 export async function action({ request, context }: ActionFunctionArgs) {
   const env = (context as any).cloudflare?.env;
-  await requireAuth(request, env);
+  const user = await requireAuth(request, env);
 
   if (request.method !== 'POST') {
     return json({ error: 'Method not allowed' }, { status: 405 });
@@ -28,6 +40,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
 
   const incoming = await request.formData();
   const file = incoming.get('file');
+  const trackingId = incoming.get('trackingId');
 
   if (!(file instanceof File)) {
     return json({ error: 'No file provided' }, { status: 400 });
@@ -59,6 +72,24 @@ export async function action({ request, context }: ActionFunctionArgs) {
     if (!response.ok) {
       return json({ error: data.error?.message || 'Cloudinary upload failed' }, { status: 400 });
     }
+
+    /*
+     * Persisted so an upload survives being ephemeral — a record of what was uploaded,
+     * by whom, and for which chat, independent of whether the file also gets copied into
+     * this chat's public/ folder (that's a separate write the client makes itself).
+     */
+    await recordCloudinaryUpload(
+      {
+        trackingId: typeof trackingId === 'string' && trackingId ? trackingId : undefined,
+        uploadedBy: { userId: user.userId, email: user.email },
+        filename: file.name,
+        url: data.secure_url,
+        publicId: data.public_id,
+        resourceType: data.resource_type,
+        bytes: data.bytes,
+      },
+      env,
+    ).catch((error) => console.error('Failed to record Cloudinary upload:', error));
 
     return json({ url: data.secure_url as string, publicId: data.public_id as string });
   } catch (error) {
