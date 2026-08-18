@@ -253,7 +253,7 @@ ${value.content}
               ];
 
               filteredMessages = [...restoreMessages, ...filteredMessages];
-              restoreSnapshot(mixedId);
+              restoreSnapshot(mixedId, validSnapshot);
 
               if (isRemotePull) {
                 setJustPulledFromServer(true);
@@ -266,6 +266,12 @@ ${value.content}
             description.set(storedMessages.description);
             chatId.set(storedMessages.id);
             chatMetadata.set(storedMessages.metadata);
+
+            /*
+             * Runs on every load, not just the rewind/compaction branch above — uploaded
+             * files need this regardless of whether that branch ran.
+             */
+            restoreUploadedFiles(validSnapshot);
           } else {
             /*
              * No chat matched this id — surface it instead of silently bouncing to "/",
@@ -350,12 +356,61 @@ ${value.content}
           key = key.replace(container.workdir, '');
         }
 
-        await container.fs.writeFile(key, value.content, { encoding: value.isBinary ? undefined : 'utf8' });
-      } else {
+        /*
+         * Binary content is stored base64-encoded (see FilesStore#createFile) — it must be
+         * decoded back to raw bytes before writing, or the file on disk ends up containing
+         * the base64 text itself instead of the actual image/video/svg.
+         */
+        if (value.isBinary) {
+          const binary = Uint8Array.from(atob(value.content), (char) => char.charCodeAt(0));
+          await container.fs.writeFile(key, binary);
+        } else {
+          await container.fs.writeFile(key, value.content, { encoding: 'utf8' });
+        }
       }
     });
 
     // workbenchStore.files.setKey(snapshot?.files)
+  }, []);
+
+  /*
+   * Uploaded images/videos/SVGs are written straight into the WebContainer via
+   * `workbenchStore.createFile` — they never appear as a `<boltAction type="file">` inside
+   * an assistant message, so the normal reload path (which rebuilds the project purely by
+   * replaying actions parsed out of message history) has nothing to recreate them from.
+   * Without this, every uploaded file — and the public/ folder itself, if uploads were the
+   * only thing that ever wrote into it — vanishes on reload even though it's still sitting
+   * in the persisted snapshot. Restoring just the binary entries here, on every load, fills
+   * that gap without touching the (already working) text-file replay behavior.
+   */
+  const restoreUploadedFiles = useCallback(async (snapshot?: Snapshot) => {
+    if (!snapshot?.files) {
+      return;
+    }
+
+    const container = await webcontainer;
+
+    for (const [rawPath, value] of Object.entries(snapshot.files)) {
+      if (value?.type !== 'file' || !value.isBinary) {
+        continue;
+      }
+
+      let relativePath = rawPath.startsWith(container.workdir) ? rawPath.replace(container.workdir, '') : rawPath;
+      relativePath = relativePath.replace(/^\/+/, '');
+
+      try {
+        const dir = relativePath.includes('/') ? relativePath.slice(0, relativePath.lastIndexOf('/')) : '';
+
+        if (dir) {
+          await container.fs.mkdir(dir, { recursive: true });
+        }
+
+        const binary = Uint8Array.from(atob(value.content), (char) => char.charCodeAt(0));
+        await container.fs.writeFile(relativePath, binary);
+      } catch (error) {
+        console.error(`Failed to restore uploaded file ${rawPath}:`, error);
+      }
+    }
   }, []);
 
   return {
