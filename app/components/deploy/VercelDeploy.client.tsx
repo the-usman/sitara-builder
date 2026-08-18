@@ -1,21 +1,28 @@
 import { toast } from 'react-toastify';
 import { useStore } from '@nanostores/react';
-import { vercelConnection } from '~/lib/stores/vercel';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { webcontainer } from '~/lib/webcontainer';
 import { path } from '~/utils/path';
 import { useState } from 'react';
 import type { ActionCallbackData } from '~/lib/runtime/message-parser';
 import { chatId } from '~/lib/persistence/useChatHistory';
+import { useAppConfigStatus } from '~/lib/hooks/useAppConfig';
 
 export function useVercelDeploy() {
   const [isDeploying, setIsDeploying] = useState(false);
-  const vercelConn = useStore(vercelConnection);
   const currentChatId = useStore(chatId);
+  const { status } = useAppConfigStatus();
 
   const handleVercelDeploy = async () => {
-    if (!vercelConn.user || !vercelConn.token) {
-      toast.error('Please connect to Vercel first in the settings tab!');
+    /*
+     * Deploys always run against the shared, admin-managed Vercel account — this
+     * only checks whether that shared account is configured, not whether *this*
+     * browser has a personal connection. `status` is null only while it's still
+     * loading; skip the check then and let the server's own 409 (no credentials
+     * configured) surface instead.
+     */
+    if (status && !status.vercel.configured) {
+      toast.error('Vercel is not connected yet. Ask a super admin to configure it in Settings → Connections.');
       return false;
     }
 
@@ -146,7 +153,6 @@ export function useVercelDeploy() {
         body: JSON.stringify({
           projectId: existingProjectId || undefined,
           files: fileContents,
-          token: vercelConn.token,
           chatId: currentChatId,
         }),
       });
@@ -188,6 +194,6 @@ export function useVercelDeploy() {
   return {
     isDeploying,
     handleVercelDeploy,
-    isConnected: !!vercelConn.user,
+    isConnected: !!status?.vercel.configured,
   };
 }

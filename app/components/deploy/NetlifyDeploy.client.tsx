@@ -1,21 +1,28 @@
 import { toast } from 'react-toastify';
 import { useStore } from '@nanostores/react';
-import { netlifyConnection } from '~/lib/stores/netlify';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { webcontainer } from '~/lib/webcontainer';
 import { path } from '~/utils/path';
 import { useState } from 'react';
 import type { ActionCallbackData } from '~/lib/runtime/message-parser';
 import { chatId } from '~/lib/persistence/useChatHistory';
+import { useAppConfigStatus } from '~/lib/hooks/useAppConfig';
 
 export function useNetlifyDeploy() {
   const [isDeploying, setIsDeploying] = useState(false);
-  const netlifyConn = useStore(netlifyConnection);
   const currentChatId = useStore(chatId);
+  const { status } = useAppConfigStatus();
 
   const handleNetlifyDeploy = async () => {
-    if (!netlifyConn.user || !netlifyConn.token) {
-      toast.error('Please connect to Netlify first in the settings tab!');
+    /*
+     * Deploys always run against the shared, admin-managed Netlify account — this
+     * only checks whether that shared account is configured, not whether *this*
+     * browser has a personal connection. `status` is null only while it's still
+     * loading; skip the check then so a fast click isn't blocked by a race, and
+     * let the server's own 409 (no credentials configured) surface instead.
+     */
+    if (status && !status.netlify.configured) {
+      toast.error('Netlify is not connected yet. Ask a super admin to configure it in Settings → Connections.');
       return false;
     }
 
@@ -147,7 +154,6 @@ export function useNetlifyDeploy() {
         body: JSON.stringify({
           siteId: existingSiteId || undefined,
           files: fileContents,
-          token: netlifyConn.token,
           chatId: currentChatId,
         }),
       });
@@ -165,52 +171,20 @@ export function useNetlifyDeploy() {
         throw new Error(data.error || 'Invalid deployment response');
       }
 
-      const maxAttempts = 20; // 2 minutes timeout
-      let attempts = 0;
-      let deploymentStatus;
-
-      while (attempts < maxAttempts) {
-        try {
-          const statusResponse = await fetch(
-            `https://api.netlify.com/api/v1/sites/${data.site.id}/deploys/${data.deploy.id}`,
-            {
-              headers: {
-                Authorization: `Bearer ${netlifyConn.token}`,
-              },
-            },
-          );
-
-          deploymentStatus = (await statusResponse.json()) as any;
-
-          if (deploymentStatus.state === 'ready' || deploymentStatus.state === 'uploaded') {
-            break;
-          }
-
-          if (deploymentStatus.state === 'error') {
-            // Notify that deployment failed
-            deployArtifact.runner.handleDeployAction('deploying', 'failed', {
-              error: 'Deployment failed: ' + (deploymentStatus.error_message || 'Unknown error'),
-              source: 'netlify',
-            });
-            throw new Error('Deployment failed: ' + (deploymentStatus.error_message || 'Unknown error'));
-          }
-
-          attempts++;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        } catch (error) {
-          console.error('Status check error:', error);
-          attempts++;
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-      }
-
-      if (attempts >= maxAttempts) {
-        // Notify that deployment timed out
+      /*
+       * api.netlify-deploy.ts already polls Netlify server-side until the deploy is
+       * ready (or errors/times out) before responding, so `data.deploy` here is
+       * already final. Polling again from the browser used the caller's personal
+       * Netlify token, which only super-admin accounts had — that's what made
+       * deploys silently hang for every other signed-in user despite the shared
+       * token being configured.
+       */
+      if (data.deploy.state === 'error') {
         deployArtifact.runner.handleDeployAction('deploying', 'failed', {
-          error: 'Deployment timed out',
+          error: 'Deployment failed',
           source: 'netlify',
         });
-        throw new Error('Deployment timed out');
+        throw new Error('Deployment failed');
       }
 
       // Store the site ID if it's a new site
@@ -220,7 +194,7 @@ export function useNetlifyDeploy() {
 
       // Notify that deployment completed successfully
       deployArtifact.runner.handleDeployAction('complete', 'complete', {
-        url: deploymentStatus.ssl_url || deploymentStatus.url,
+        url: data.deploy.url,
         source: 'netlify',
       });
 
@@ -238,6 +212,6 @@ export function useNetlifyDeploy() {
   return {
     isDeploying,
     handleNetlifyDeploy,
-    isConnected: !!netlifyConn.user,
+    isConnected: !!status?.netlify.configured,
   };
 }

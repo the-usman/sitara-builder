@@ -389,10 +389,16 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     };
 
     const saveImageToProject = async (file: File, base64Image: string) => {
-      const toastId = toast.loading('AI is naming your image…');
+      /*
+       * Vision models can't read SVG (it's not a raster format they accept), so the AI
+       * naming call is guaranteed to fail/time out for one — skip straight to a slugified
+       * name instead of making the user wait 8s for a call that can't succeed.
+       */
+      const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+      const toastId = toast.loading(isSvg ? 'Saving image…' : 'AI is naming your image…');
 
       try {
-        const aiName = await getAiFilename(base64Image);
+        const aiName = isSvg ? slugifyBaseName(file.name) || 'image' : await getAiFilename(base64Image);
         const ext = (file.name.split('.').pop() || 'png').toLowerCase();
         const filename = `${aiName}.${ext}`;
 
@@ -423,17 +429,24 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     };
 
     /*
-     * Slug-only filename, mirroring the shape api.image-name.ts returns for images —
-     * there's no AI naming step here since vision models can't watch a video.
+     * Slug-only basename, mirroring the shape api.image-name.ts returns for images —
+     * used whenever there's no AI naming step (videos, SVGs — formats vision models
+     * can't read).
      */
-    const slugifyFilename = (name: string, fallbackExt: string): string => {
+    const slugifyBaseName = (name: string): string => {
       const dot = name.lastIndexOf('.');
       const base = dot > 0 ? name.slice(0, dot) : name;
-      const ext = (dot > 0 ? name.slice(dot + 1) : fallbackExt).toLowerCase();
-      const slug = base
+
+      return base
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '');
+    };
+
+    const slugifyFilename = (name: string, fallbackExt: string): string => {
+      const dot = name.lastIndexOf('.');
+      const ext = (dot > 0 ? name.slice(dot + 1) : fallbackExt).toLowerCase();
+      const slug = slugifyBaseName(name);
 
       return `${slug || 'video'}.${ext}`;
     };

@@ -116,6 +116,25 @@ const processSampledMessages = createSampler(
   50,
 );
 
+/*
+ * Vision models only accept raster formats (png/jpeg/webp/gif) — an SVG data URL sent
+ * as an "image" content part gets rejected by the provider and fails the whole request.
+ * Videos are already excluded (empty imageDataList slot); SVGs need the same treatment
+ * even though their slot is non-empty, since they still render fine as an <img> preview.
+ */
+function toVisionImageParts(uploadedFiles: File[], imageDataList: string[]): Array<{ type: 'image'; image: string }> {
+  return uploadedFiles.reduce<Array<{ type: 'image'; image: string }>>((parts, file, index) => {
+    const dataUrl = imageDataList[index];
+    const isSvg = file.type === 'image/svg+xml' || file.name.toLowerCase().endsWith('.svg');
+
+    if (dataUrl && !isSvg) {
+      parts.push({ type: 'image', image: dataUrl });
+    }
+
+    return parts;
+  }, []);
+}
+
 interface ChatProps {
   initialMessages: Message[];
   storeMessageHistory: (messages: Message[], options?: { immediate?: boolean }) => Promise<void>;
@@ -456,10 +475,7 @@ export const ChatImpl = memo(
                       type: 'text',
                       text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
                     },
-                    ...imageDataList.filter(Boolean).map((imageData) => ({
-                      type: 'image',
-                      image: imageData,
-                    })),
+                    ...toVisionImageParts(uploadedFiles, imageDataList),
                   ] as any,
                 },
                 {
@@ -504,10 +520,7 @@ export const ChatImpl = memo(
                 type: 'text',
                 text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
               },
-              ...imageDataList.filter(Boolean).map((imageData) => ({
-                type: 'image',
-                image: imageData,
-              })),
+              ...toVisionImageParts(uploadedFiles, imageDataList),
             ] as any,
           },
           { body: { selectedClient: selectedClientRef.current } },
@@ -545,10 +558,7 @@ export const ChatImpl = memo(
                 type: 'text',
                 text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}`,
               },
-              ...imageDataList.filter(Boolean).map((imageData) => ({
-                type: 'image',
-                image: imageData,
-              })),
+              ...toVisionImageParts(uploadedFiles, imageDataList),
             ] as any,
           },
           { body: { selectedClient: selectedClientRef.current } },
@@ -564,10 +574,7 @@ export const ChatImpl = memo(
                 type: 'text',
                 text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
               },
-              ...imageDataList.filter(Boolean).map((imageData) => ({
-                type: 'image',
-                image: imageData,
-              })),
+              ...toVisionImageParts(uploadedFiles, imageDataList),
             ] as any,
           },
           { body: { selectedClient: selectedClientRef.current } },
