@@ -400,7 +400,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       try {
         const aiName = isSvg ? slugifyBaseName(file.name) || 'image' : await getAiFilename(base64Image);
         const ext = (file.name.split('.').pop() || 'png').toLowerCase();
-        const filename = `${aiName}.${ext}`;
+        const filename = `${aiName}-${uniqueFileSuffix()}.${ext}`;
 
         // Rename the File object so the AI message shows the correct name
         const renamedFile = new File([file], filename, { type: file.type });
@@ -443,12 +443,25 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
         .replace(/^-+|-+$/g, '');
     };
 
+    /*
+     * Short random suffix appended to every generated filename so two uploads that land on
+     * the same name (two photos named "logo", an AI naming call that picks the same word
+     * twice) don't silently overwrite each other in public/.
+     */
+    const uniqueFileSuffix = (): string => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID().slice(0, 8);
+      }
+
+      return Math.random().toString(36).slice(2, 10);
+    };
+
     const slugifyFilename = (name: string, fallbackExt: string): string => {
       const dot = name.lastIndexOf('.');
       const ext = (dot > 0 ? name.slice(dot + 1) : fallbackExt).toLowerCase();
       const slug = slugifyBaseName(name);
 
-      return `${slug || 'video'}.${ext}`;
+      return `${slug || 'video'}-${uniqueFileSuffix()}.${ext}`;
     };
 
     const saveVideoToProject = async (file: File) => {

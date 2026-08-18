@@ -351,6 +351,38 @@ function FileContextMenu({
     [fullPath],
   );
 
+  const handleUploadFile = useCallback(() => {
+    const input = document.createElement('input');
+    input.type = 'file';
+
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+
+      if (!file) {
+        return;
+      }
+
+      try {
+        const newFilePath = path.join(targetPath, file.name);
+        const arrayBuffer = await file.arrayBuffer();
+        const binaryContent = new Uint8Array(arrayBuffer);
+
+        const success = await workbenchStore.createFile(newFilePath, binaryContent);
+
+        if (success) {
+          toast.success(`File ${file.name} uploaded successfully`);
+        } else {
+          toast.error(`Failed to upload file ${file.name}`);
+        }
+      } catch (error) {
+        toast.error(`Error uploading ${file.name}`);
+        logger.error(error);
+      }
+    };
+
+    input.click();
+  }, [targetPath]);
+
   const handleCreateFile = async (fileName: string) => {
     const newFilePath = path.join(targetPath, fileName);
     const success = await workbenchStore.createFile(newFilePath, '');
@@ -514,6 +546,12 @@ function FileContextMenu({
                 <div className="flex items-center gap-2">
                   <div className="i-ph:folder-plus" />
                   New Folder
+                </div>
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={handleUploadFile}>
+                <div className="flex items-center gap-2">
+                  <div className="i-ph:upload-simple" />
+                  Upload File
                 </div>
               </ContextMenuItem>
             </ContextMenu.Group>
