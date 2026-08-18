@@ -425,9 +425,22 @@ function FileContextMenu({
           return;
         }
 
-        await navigator.clipboard.writeText(data.url);
+        /*
+         * The upload already succeeded by this point — clipboard access is a separate
+         * concern (it throws if the page lost focus during the wait, e.g. the user
+         * switched tabs) and must never turn a successful upload into a reported failure.
+         */
+        let copied = true;
+
+        try {
+          await navigator.clipboard.writeText(data.url);
+        } catch (clipboardError) {
+          copied = false;
+          logger.error(clipboardError);
+        }
+
         toast.update(toastId, {
-          render: `Uploaded — URL copied to clipboard: ${data.url}`,
+          render: copied ? `Uploaded — URL copied to clipboard: ${data.url}` : `Uploaded: ${data.url}`,
           type: 'success',
           isLoading: false,
           autoClose: 5000,
