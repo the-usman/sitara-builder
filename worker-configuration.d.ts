@@ -27,4 +27,14 @@ interface Env {
   XAI_API_KEY: string;
   PERPLEXITY_API_KEY: string;
   AWS_BEDROCK_CONFIG: string;
+  CLOUDINARY_CLOUD_NAME: string;
+  CLOUDINARY_API_KEY: string;
+  CLOUDINARY_API_SECRET: string;
+
+  // Shared deploy credentials — see ENV_FALLBACKS in provider-tokens.server.ts for the precedence order.
+  NETLIFY_TOKEN: string;
+  NETLIFY_AUTH_TOKEN: string;
+  VITE_NETLIFY_ACCESS_TOKEN: string;
+  VERCEL_TOKEN: string;
+  VITE_VERCEL_ACCESS_TOKEN: string;
 }
