@@ -18,6 +18,22 @@ services:
       target: bolt-ai-production
     restart: unless-stopped
 
+    # `dockerstart` runs `wrangler pages dev`, which is a single Node.js process - it does
+    # not use multiple cores on its own. Running 2 replicas is what actually puts a 4-core
+    # box's other cores to work; Traefik round-robins across every container matching the
+    # labels below automatically, no config needed on its side. Assumes nothing else heavy
+    # shares this host - if MongoDB or another app also runs here, lower these numbers so
+    # you don't starve them (2 x 1.5 cpus / 4g = 3 cpus / 8g total, leaving 1 cpu / 4g free).
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 4g
+        reservations:
+          cpus: '1'
+          memory: 2g
+
     # Not published to the host. Traefik reaches the container over dokploy-network, so a
     # host port mapping would only add a plain-HTTP way in that bypasses TLS entirely.
     expose:
@@ -26,6 +42,11 @@ services:
       NODE_ENV: production
       RUNNING_IN_DOCKER: 'true'
       PORT: '5173'
+
+      # Matches the 4 physical cores available - lets Node's libuv thread pool (used for
+      # file system and DNS work) actually use them instead of the 4-thread default that
+      # was really a guess unrelated to this box's core count.
+      UV_THREADPOOL_SIZE: '4'
 
       # --- Required -------------------------------------------------------------
       # The server throws on any request if these are unset. No defaults on purpose:
