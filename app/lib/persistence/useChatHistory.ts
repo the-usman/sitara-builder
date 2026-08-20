@@ -60,11 +60,11 @@ export const chatMetadata = atom<IChatMetadata | undefined>(undefined);
  * pushed to the server either. That's what made it vanish on reload with no server copy
  * to fall back to. Call this right after any such write so both copies stay current.
  */
-export async function persistFileSnapshot(): Promise<void> {
+export async function persistFileSnapshot(): Promise<boolean> {
   const id = chatId.get();
 
   if (!id || !db) {
-    return;
+    return false;
   }
 
   let stored;
@@ -73,7 +73,7 @@ export async function persistFileSnapshot(): Promise<void> {
     stored = await getMessages(db, id);
   } catch (error) {
     console.error('Failed to load messages for file snapshot:', error);
-    return;
+    return false;
   }
 
   const messages = stored?.messages ?? [];
@@ -88,21 +88,23 @@ export async function persistFileSnapshot(): Promise<void> {
     await setSnapshot(db, id, snapshot);
   } catch (error) {
     console.error('Failed to save file snapshot locally:', error);
-    return;
+    return false;
   }
 
   const trackingId = deriveTrackingId(messages);
 
-  if (trackingId) {
-    void pushChat({
-      trackingId,
-      urlId: stored?.urlId,
-      description: stored?.description ?? description.get(),
-      messages,
-      metadata: stored?.metadata ?? chatMetadata.get(),
-      snapshot,
-    });
+  if (!trackingId) {
+    return false;
   }
+
+  return pushChat({
+    trackingId,
+    urlId: stored?.urlId,
+    description: stored?.description ?? description.get(),
+    messages,
+    metadata: stored?.metadata ?? chatMetadata.get(),
+    snapshot,
+  });
 }
 
 export function useChatHistory() {

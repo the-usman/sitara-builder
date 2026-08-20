@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { toast } from 'react-toastify';
 import useViewport from '~/lib/hooks';
 import { chatStore } from '~/lib/stores/chat';
 import { netlifyConnection } from '~/lib/stores/netlify';
@@ -11,6 +12,7 @@ import { NetlifyDeploymentLink } from '~/components/chat/NetlifyDeploymentLink.c
 import { VercelDeploymentLink } from '~/components/chat/VercelDeploymentLink.client';
 import { useVercelDeploy } from '~/components/deploy/VercelDeploy.client';
 import { useNetlifyDeploy } from '~/components/deploy/NetlifyDeploy.client';
+import { chatId, persistFileSnapshot } from '~/lib/persistence/useChatHistory';
 
 interface HeaderActionButtonsProps {}
 
@@ -31,6 +33,8 @@ export function HeaderActionButtons({}: HeaderActionButtonsProps) {
   const isStreaming = useStore(streamingState);
   const { handleVercelDeploy } = useVercelDeploy();
   const { handleNetlifyDeploy } = useNetlifyDeploy();
+  const currentChatId = useStore(chatId);
+  const [isSyncingSnapshot, setIsSyncingSnapshot] = useState(false);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -64,6 +68,36 @@ export function HeaderActionButtons({}: HeaderActionButtonsProps) {
     } finally {
       setIsDeploying(false);
       setDeployingTo(null);
+    }
+  };
+
+  /*
+   * persistFileSnapshot() already gzips the current WebContainer files and pushes
+   * them to /api/chat-sync (updating `filesGzip` in Mongo) — this just gives that
+   * existing flow a manual trigger with feedback tied to the click, instead of
+   * waiting on the debounced auto-sync. Failures are already toasted/logged inside
+   * pushChat (see chat-sync.client.ts), so only the success case needs a toast here.
+   */
+  const onSyncSnapshot = async () => {
+    /*
+     * The shared Button component below only styles `disabled`, it doesn't set the
+     * DOM attribute (see Button's implementation at the bottom of this file), so
+     * onClick still fires — guard here instead of relying on that to block the call.
+     */
+    if (!currentChatId || isSyncingSnapshot) {
+      return;
+    }
+
+    setIsSyncingSnapshot(true);
+
+    try {
+      const ok = await persistFileSnapshot();
+
+      if (ok) {
+        toast.success('Files synced to the cloud');
+      }
+    } finally {
+      setIsSyncingSnapshot(false);
     }
   };
 
@@ -146,6 +180,17 @@ export function HeaderActionButtons({}: HeaderActionButtonsProps) {
           </div>
         )}
       </div>
+      <div className="flex border border-bolt-elements-borderColor rounded-md overflow-hidden mr-2">
+        <Button
+          disabled={!currentChatId || isSyncingSnapshot}
+          onClick={onSyncSnapshot}
+          className="px-3 flex items-center gap-2"
+          title="Push current files to the cloud now"
+        >
+          <div className={classNames('i-ph:cloud-arrow-up text-sm', isSyncingSnapshot ? 'animate-pulse' : '')} />
+          <span className="text-sm">{isSyncingSnapshot ? 'Syncing…' : 'Sync Files'}</span>
+        </Button>
+      </div>
       <div className="flex border border-bolt-elements-borderColor rounded-md overflow-hidden">
         <Button
           active={showChat}
@@ -182,9 +227,10 @@ interface ButtonProps {
   children?: any;
   onClick?: VoidFunction;
   className?: string;
+  title?: string;
 }
 
-function Button({ active = false, disabled = false, children, onClick, className }: ButtonProps) {
+function Button({ active = false, disabled = false, children, onClick, className, title }: ButtonProps) {
   return (
     <button
       className={classNames(
@@ -199,6 +245,7 @@ function Button({ active = false, disabled = false, children, onClick, className
         className,
       )}
       onClick={onClick}
+      title={title}
     >
       {children}
     </button>

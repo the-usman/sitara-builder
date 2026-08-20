@@ -74,6 +74,20 @@ interface DeployRequestBody {
   chatId: string;
 }
 
+/*
+ * chatId is the chat's trackingId — a mixed-case nanoid like "r8ftipJSEzzuzMLX" — but
+ * Vercel project names must be lowercase and limited to [a-z0-9._-], with no '---' run.
+ * Passing chatId straight through (as this used to) makes project creation fail with
+ * "Project names ... must be lowercase" for any chat whose id has uppercase letters.
+ */
+function toVercelProjectName(chatId: string): string {
+  return `sitara-builder-${chatId}-${Date.now()}`
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-{3,}/g, '--')
+    .slice(0, 100);
+}
+
 // Existing action function for POST requests
 export async function action({ request, context }: ActionFunctionArgs) {
   const env = (context as any).cloudflare?.env;
@@ -93,7 +107,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
 
     // If no projectId provided, create a new project
     if (!targetProjectId) {
-      const projectName = `sitara-builder-${chatId}-${Date.now()}`;
+      const projectName = toVercelProjectName(chatId);
       const createProjectResponse = await fetch('https://api.vercel.com/v9/projects', {
         method: 'POST',
         headers: {
@@ -140,7 +154,7 @@ export async function action({ request, context }: ActionFunctionArgs) {
         };
       } else {
         // If project doesn't exist, create a new one
-        const projectName = `sitara-builder-${chatId}-${Date.now()}`;
+        const projectName = toVercelProjectName(chatId);
         const createProjectResponse = await fetch('https://api.vercel.com/v9/projects', {
           method: 'POST',
           headers: {
