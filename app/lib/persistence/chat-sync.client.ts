@@ -1,6 +1,8 @@
 import type { Message } from 'ai';
+import { toast } from 'react-toastify';
 import type { Snapshot } from './types';
 import type { IChatMetadata } from './db';
+import { logStore } from '~/lib/stores/logs';
 
 const ENDPOINT = '/api/chat-sync';
 
@@ -135,15 +137,41 @@ export async function pushChat(args: PushChatArgs): Promise<boolean> {
 
     if (!response.ok) {
       const body = (await response.json().catch(() => ({}))) as { error?: string };
-      console.warn('[chat-sync] push rejected:', response.status, body.error ?? '');
+      const message = body.error || `HTTP ${response.status}`;
+      console.warn('[chat-sync] push rejected:', response.status, message);
+      reportPushFailure(args.trackingId, message, { status: response.status });
 
       return false;
     }
 
+    warnedTrackingIds.delete(args.trackingId);
+
     return true;
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     console.warn('[chat-sync] push failed:', error);
+    reportPushFailure(args.trackingId, message);
+
     return false;
+  }
+}
+
+/*
+ * Sync failures used to only hit console.warn, so a chat that silently stopped
+ * reaching the server (e.g. its snapshot grew past MAX_SNAPSHOT_BYTES) looked
+ * identical to one syncing fine — nothing in the UI ever said otherwise. Track which
+ * trackingIds we've already warned about so a chat stuck failing on every debounced
+ * push (the common case — its files just don't shrink back down) doesn't spam a toast
+ * on every turn; the Event Log still gets an entry each time for full history.
+ */
+const warnedTrackingIds = new Set<string>();
+
+function reportPushFailure(trackingId: string, message: string, details?: Record<string, unknown>): void {
+  logStore.logWarning(`Chat sync failed: ${message}`, { trackingId, ...details });
+
+  if (!warnedTrackingIds.has(trackingId)) {
+    warnedTrackingIds.add(trackingId);
+    toast.warn(`This chat isn't syncing to the cloud: ${message}`);
   }
 }
 

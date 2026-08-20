@@ -22,6 +22,7 @@ import type { FileMap } from '~/lib/stores/files';
 import type { Snapshot } from './types';
 import { cancelPendingPush, deriveTrackingId, pullChat, pushChat, schedulePush } from './chat-sync.client';
 import { webcontainer } from '~/lib/webcontainer';
+import { writeSnapshotToContainer } from './snapshotFiles.client';
 import { detectProjectCommands, createCommandActionsString } from '~/utils/projectCommands';
 import type { ContextAnnotation } from '~/types/context';
 
@@ -386,46 +387,8 @@ ${value.content}
     [db],
   );
 
-  const restoreSnapshot = useCallback(async (id: string, snapshot?: Snapshot) => {
-    // const snapshotStr = localStorage.getItem(`snapshot:${id}`); // Remove localStorage usage
-    const container = await webcontainer;
-
-    const validSnapshot = snapshot || { chatIndex: '', files: {} };
-
-    if (!validSnapshot?.files) {
-      return;
-    }
-
-    Object.entries(validSnapshot.files).forEach(async ([key, value]) => {
-      if (key.startsWith(container.workdir)) {
-        key = key.replace(container.workdir, '');
-      }
-
-      if (value?.type === 'folder') {
-        await container.fs.mkdir(key, { recursive: true });
-      }
-    });
-    Object.entries(validSnapshot.files).forEach(async ([key, value]) => {
-      if (value?.type === 'file') {
-        if (key.startsWith(container.workdir)) {
-          key = key.replace(container.workdir, '');
-        }
-
-        /*
-         * Binary content is stored base64-encoded (see FilesStore#createFile) — it must be
-         * decoded back to raw bytes before writing, or the file on disk ends up containing
-         * the base64 text itself instead of the actual image/video/svg.
-         */
-        if (value.isBinary) {
-          const binary = Uint8Array.from(atob(value.content), (char) => char.charCodeAt(0));
-          await container.fs.writeFile(key, binary);
-        } else {
-          await container.fs.writeFile(key, value.content, { encoding: 'utf8' });
-        }
-      }
-    });
-
-    // workbenchStore.files.setKey(snapshot?.files)
+  const restoreSnapshot = useCallback(async (_id: string, snapshot?: Snapshot) => {
+    await writeSnapshotToContainer(snapshot);
   }, []);
 
   /*

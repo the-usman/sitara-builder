@@ -3,6 +3,29 @@ import JSZip from 'jszip';
 import { requireAuth } from '~/lib/auth.server';
 import { getProviderToken } from '~/lib/config/provider-tokens.server';
 
+type TemplateFile = { name: string; path: string; content: string };
+
+/*
+ * Extracted template files are keyed to an immutable GitHub release tag, so once we've
+ * unzipped a release its contents never change. Without caching, every new project a
+ * user starts re-downloads and re-unzips the whole template repo inside the Worker on
+ * every request - that's CPU-heavy enough to hit Cloudflare's per-request CPU time
+ * limit and just hang, which is what "creating initial files" getting stuck looks like.
+ */
+const memoryCache = new Map<string, { files: TemplateFile[]; expiresAt: number }>();
+const MEMORY_TTL_MS = 60 * 60 * 1000; // 1 hour - safety net in case a tag ever gets force-pushed
+const EDGE_CACHE_TTL_SECONDS = 60 * 60 * 24; // 1 day
+
+function pruneMemoryCache() {
+  const now = Date.now();
+
+  for (const [key, entry] of memoryCache) {
+    if (entry.expiresAt < now) {
+      memoryCache.delete(key);
+    }
+  }
+}
+
 export async function loader({ request, context }: { request: Request; context: any }) {
   const env = context?.cloudflare?.env;
   await requireAuth(request, env);
@@ -30,7 +53,7 @@ export async function loader({ request, context }: { request: Request; context: 
       ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
     };
 
-    // Get the latest release
+    // Get the latest release - cheap network call, needed to derive the cache key
     const releaseResponse = await fetch(`${baseUrl}/repos/${repo}/releases/latest`, {
       headers: commonHeaders,
     });
@@ -43,8 +66,40 @@ export async function loader({ request, context }: { request: Request; context: 
 
     const releaseData = (await releaseResponse.json()) as any;
     const zipballUrl = releaseData.zipball_url;
+    const cacheKeyStr = `${repo}@${releaseData.tag_name}`;
 
-    // Fetch the zipball
+    // 1. Fastest path: this warm isolate already extracted this release recently
+    pruneMemoryCache();
+
+    const memoryHit = memoryCache.get(cacheKeyStr);
+
+    if (memoryHit) {
+      return json(memoryHit.files);
+    }
+
+    // 2. Next-fastest path: Cloudflare's edge cache, shared across isolates on this PoP
+    const caches = context?.cloudflare?.caches;
+    const edgeCacheKey = caches
+      ? new Request(`https://template-cache.internal/${encodeURIComponent(cacheKeyStr)}`)
+      : null;
+
+    if (caches && edgeCacheKey) {
+      try {
+        const cached = await caches.default.match(edgeCacheKey);
+
+        if (cached) {
+          const files = (await cached.json()) as TemplateFile[];
+          memoryCache.set(cacheKeyStr, { files, expiresAt: Date.now() + MEMORY_TTL_MS });
+
+          return json(files);
+        }
+      } catch (error) {
+        // Cache API isn't available on every domain (e.g. *.workers.dev/*.pages.dev) - fall through to a full fetch
+        console.warn('[github-template] edge cache read failed:', error);
+      }
+    }
+
+    // 3. Full miss: download and unzip the release
     const zipResponse = await fetch(zipballUrl, {
       headers: commonHeaders,
     });
@@ -99,7 +154,30 @@ export async function loader({ request, context }: { request: Request; context: 
     });
 
     const results = await Promise.all(promises);
-    const fileList = results.filter(Boolean) as { name: string; path: string; content: string }[];
+    const fileList = results.filter(Boolean) as TemplateFile[];
+
+    memoryCache.set(cacheKeyStr, { files: fileList, expiresAt: Date.now() + MEMORY_TTL_MS });
+
+    if (caches && edgeCacheKey) {
+      const ctx = context?.cloudflare?.ctx;
+      const cacheResponse = new Response(JSON.stringify(fileList), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${EDGE_CACHE_TTL_SECONDS}`,
+        },
+      });
+
+      const putPromise = Promise.resolve(caches.default.put(edgeCacheKey, cacheResponse)).catch((error: unknown) => {
+        console.warn('[github-template] edge cache write failed:', error);
+      });
+
+      // Don't block the response on the cache write
+      if (ctx?.waitUntil) {
+        ctx.waitUntil(putPromise);
+      } else {
+        await putPromise;
+      }
+    }
 
     return json(fileList);
   } catch (error) {

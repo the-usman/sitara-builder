@@ -67,7 +67,7 @@ export class PreviewsStore {
 
       localStorage.setItem = (...args) => {
         originalSetItem.apply(localStorage, args);
-        this._broadcastStorageSync();
+        this._scheduleStorageSync();
       };
     }
 
@@ -109,15 +109,28 @@ export class PreviewsStore {
         }
       });
 
-      // Reload the page content
+      // Reload preview iframes so they pick up the synced storage
       if (typeof window !== 'undefined' && window.location) {
-        const iframe = document.querySelector('iframe');
-
-        if (iframe) {
+        document.querySelectorAll<HTMLIFrameElement>('iframe[title="preview"]').forEach((iframe) => {
+          // eslint-disable-next-line no-self-assign
           iframe.src = iframe.src;
-        }
+        });
       }
     }
+  }
+
+  // Debounce so bursts of localStorage writes collapse into a single broadcast
+  #storageSyncTimeout: NodeJS.Timeout | null = null;
+
+  private _scheduleStorageSync() {
+    if (this.#storageSyncTimeout) {
+      return;
+    }
+
+    this.#storageSyncTimeout = setTimeout(() => {
+      this.#storageSyncTimeout = null;
+      this._broadcastStorageSync();
+    }, 300);
   }
 
   // Broadcast storage state to other tabs
@@ -174,21 +187,6 @@ export class PreviewsStore {
           }
         },
       );
-
-      // Watch for DOM changes that might affect storage
-      if (typeof window !== 'undefined') {
-        const observer = new MutationObserver((_mutations) => {
-          // Broadcast storage changes when DOM changes
-          this._broadcastStorageSync();
-        });
-
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          characterData: true,
-          attributes: true,
-        });
-      }
     } catch (error) {
       console.error('[Preview] Error setting up watchers:', error);
     }

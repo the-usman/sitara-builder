@@ -19,7 +19,7 @@ export async function openDatabase(): Promise<IDBDatabase | undefined> {
   }
 
   return new Promise((resolve) => {
-    const request = indexedDB.open('boltHistory', 3);
+    const request = indexedDB.open('boltHistory', 4);
 
     request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -54,6 +54,13 @@ export async function openDatabase(): Promise<IDBDatabase | undefined> {
         }
 
         store.createIndex('urlId', 'urlId', { unique: false });
+      }
+
+      if (oldVersion < 4) {
+        if (!db.objectStoreNames.contains('snapshotHistory')) {
+          const store = db.createObjectStore('snapshotHistory', { keyPath: 'id', autoIncrement: true });
+          store.createIndex('chatId', 'chatId', { unique: false });
+        }
       }
     };
 
@@ -155,7 +162,7 @@ export async function getMessagesById(db: IDBDatabase, id: string): Promise<Chat
 }
 
 export async function deleteById(db: IDBDatabase, id: string): Promise<void> {
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(['chats', 'snapshots'], 'readwrite'); // Add snapshots store to transaction
     const chatStore = transaction.objectStore('chats');
     const snapshotStore = transaction.objectStore('snapshots');
@@ -197,6 +204,12 @@ export async function deleteById(db: IDBDatabase, id: string): Promise<void> {
     };
     transaction.onerror = () => reject(transaction.error);
   });
+
+  try {
+    await deleteSnapshotHistoryForChat(db, id);
+  } catch (error) {
+    logger.error('Failed to delete snapshot history', error);
+  }
 }
 
 export async function getNextId(db: IDBDatabase): Promise<string> {
@@ -357,12 +370,140 @@ export async function getSnapshot(db: IDBDatabase, chatId: string): Promise<Snap
 }
 
 export async function setSnapshot(db: IDBDatabase, chatId: string, snapshot: Snapshot): Promise<void> {
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
     const request = store.put({ chatId, snapshot });
 
     request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+
+  try {
+    await appendSnapshotHistory(db, chatId, snapshot);
+  } catch (error) {
+    // History is a nice-to-have on top of the "latest" snapshot above - never let it block a save
+    logger.error('Failed to append snapshot history', error);
+  }
+}
+
+export interface SnapshotHistoryEntry {
+  id: number;
+  chatId: string;
+  snapshot: Snapshot;
+  timestamp: string;
+}
+
+const MAX_SNAPSHOT_HISTORY_PER_CHAT = 15;
+
+async function pruneSnapshotHistory(store: IDBObjectStore, chatId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const index = store.index('chatId');
+    const request = index.getAllKeys(IDBKeyRange.only(chatId));
+
+    request.onsuccess = () => {
+      // Keys are auto-incrementing, so the lowest keys are the oldest entries
+      const keys = (request.result as number[]).sort((a, b) => a - b);
+      const excess = keys.slice(0, Math.max(0, keys.length - MAX_SNAPSHOT_HISTORY_PER_CHAT));
+
+      if (excess.length === 0) {
+        resolve();
+        return;
+      }
+
+      let remaining = excess.length;
+      excess.forEach((key) => {
+        const deleteRequest = store.delete(key);
+
+        deleteRequest.onsuccess = () => {
+          remaining -= 1;
+
+          if (remaining === 0) {
+            resolve();
+          }
+        };
+        deleteRequest.onerror = () => reject(deleteRequest.error);
+      });
+    };
+
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** Appends a version of the given snapshot, keeping only the most recent `MAX_SNAPSHOT_HISTORY_PER_CHAT` per chat. */
+export async function appendSnapshotHistory(db: IDBDatabase, chatId: string, snapshot: Snapshot): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('snapshotHistory', 'readwrite');
+    const store = transaction.objectStore('snapshotHistory');
+    const request = store.add({ chatId, snapshot, timestamp: new Date().toISOString() });
+
+    request.onsuccess = () => {
+      pruneSnapshotHistory(store, chatId).then(resolve).catch(reject);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/** Lists saved versions for a chat, newest first. */
+export async function getSnapshotHistory(db: IDBDatabase, chatId: string): Promise<SnapshotHistoryEntry[]> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('snapshotHistory', 'readonly');
+    const store = transaction.objectStore('snapshotHistory');
+    const index = store.index('chatId');
+    const request = index.getAll(IDBKeyRange.only(chatId));
+
+    request.onsuccess = () => {
+      const entries = (request.result as SnapshotHistoryEntry[]) || [];
+      entries.sort((a, b) => b.id - a.id);
+      resolve(entries);
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function getSnapshotHistoryEntry(
+  db: IDBDatabase,
+  id: number,
+): Promise<SnapshotHistoryEntry | undefined> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('snapshotHistory', 'readonly');
+    const store = transaction.objectStore('snapshotHistory');
+    const request = store.get(id);
+
+    request.onsuccess = () => resolve(request.result as SnapshotHistoryEntry | undefined);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function deleteSnapshotHistoryForChat(db: IDBDatabase, chatId: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction('snapshotHistory', 'readwrite');
+    const store = transaction.objectStore('snapshotHistory');
+    const index = store.index('chatId');
+    const request = index.getAllKeys(IDBKeyRange.only(chatId));
+
+    request.onsuccess = () => {
+      const keys = request.result as number[];
+
+      if (keys.length === 0) {
+        resolve();
+        return;
+      }
+
+      let remaining = keys.length;
+      keys.forEach((key) => {
+        const deleteRequest = store.delete(key);
+
+        deleteRequest.onsuccess = () => {
+          remaining -= 1;
+
+          if (remaining === 0) {
+            resolve();
+          }
+        };
+        deleteRequest.onerror = () => reject(deleteRequest.error);
+      });
+    };
     request.onerror = () => reject(request.error);
   });
 }

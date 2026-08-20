@@ -25,6 +25,7 @@ import { EditorPanel } from './EditorPanel';
 import { Preview } from './Preview';
 import useViewport from '~/lib/hooks';
 import { PushToGitHubDialog } from '~/components/@settings/tabs/connections/components/PushToGitHubDialog';
+import { VersionHistoryDialog } from './VersionHistoryDialog.client';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { usePreviewStore } from '~/lib/stores/previews';
 
@@ -284,6 +285,7 @@ export const Workbench = memo(
 
     const [isSyncing, setIsSyncing] = useState(false);
     const [isPushDialogOpen, setIsPushDialogOpen] = useState(false);
+    const [isVersionHistoryOpen, setIsVersionHistoryOpen] = useState(false);
     const [fileHistory, setFileHistory] = useState<Record<string, FileHistory>>({});
 
     // const modifiedFiles = Array.from(useStore(workbenchStore.unsavedFiles).keys());
@@ -449,6 +451,17 @@ export const Workbench = memo(
                               Push to GitHub
                             </div>
                           </DropdownMenu.Item>
+                          <DropdownMenu.Item
+                            className={classNames(
+                              'cursor-pointer flex items-center w-full px-4 py-2 text-sm text-bolt-elements-textPrimary hover:bg-bolt-elements-item-backgroundActive gap-2 rounded-md group relative',
+                            )}
+                            onClick={() => setIsVersionHistoryOpen(true)}
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="i-ph:clock-counter-clockwise" />
+                              Version History
+                            </div>
+                          </DropdownMenu.Item>
                         </DropdownMenu.Content>
                       </DropdownMenu.Root>
                     </div>
@@ -530,6 +543,7 @@ export const Workbench = memo(
               }
             }}
           />
+          <VersionHistoryDialog isOpen={isVersionHistoryOpen} onClose={() => setIsVersionHistoryOpen(false)} />
         </motion.div>
       )
     );
