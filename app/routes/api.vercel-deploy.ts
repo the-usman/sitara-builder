@@ -259,7 +259,15 @@ export async function action({ request, context }: ActionFunctionArgs) {
       return json({ error: 'Deployment timed out' }, { status: 500 });
     }
 
-    const finalUrl = projectInfo.url || deploymentUrl;
+    /*
+     * Prefer the URL of the deployment we just polled to READY (`deploymentUrl`,
+     * Vercel's own `status.url`) over the project's default alias domain
+     * (`projectInfo.url`, `<name>.vercel.app`). Vercel doesn't guarantee that alias
+     * is attached the instant a brand-new project's first deployment goes READY, so
+     * always preferring it (as this used to) could hand back a URL that 404s with
+     * DEPLOYMENT_NOT_FOUND even though the deployment itself succeeded.
+     */
+    const finalUrl = deploymentUrl || projectInfo.url;
 
     if (chatId && finalUrl) {
       updateProjectUrl(chatId, 'vercelUrl', finalUrl, env).catch(console.error);
