@@ -20,6 +20,9 @@ interface Env {
   OPENAI_LIKE_API_BASE_URL: string;
   TOGETHER_API_KEY: string;
   TOGETHER_API_BASE_URL: string;
+  TOKENGO_API_KEY: string;
+  TOKENGO_API_BASE_URL: string;
+  TOKENGO_REASONING_EFFORT: string;
   DEEPSEEK_API_KEY: string;
   LMSTUDIO_API_BASE_URL: string;
   GOOGLE_GENERATIVE_AI_API_KEY: string;
