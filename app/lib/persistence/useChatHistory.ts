@@ -21,6 +21,7 @@ import {
 import type { FileMap } from '~/lib/stores/files';
 import type { Snapshot } from './types';
 import { cancelPendingPush, deriveTrackingId, pullChat, pushChat, schedulePush } from './chat-sync.client';
+import { cancelPendingGithubPush, pushToGithub, scheduleGithubPush } from './github-sync.client';
 import { webcontainer } from '~/lib/webcontainer';
 import { writeSnapshotToContainer } from './snapshotFiles.client';
 import { detectProjectCommands, createCommandActionsString } from '~/utils/projectCommands';
@@ -97,13 +98,21 @@ export async function persistFileSnapshot(): Promise<boolean> {
     return false;
   }
 
+  const metadata = stored?.metadata ?? chatMetadata.get();
+
+  if (metadata?.githubUrl) {
+    // GitHub is the source of truth once connected — keep pushing there, skip the heavy Mongo blob.
+    scheduleGithubPush({ trackingId, files: snapshot.files });
+  }
+
   return pushChat({
     trackingId,
     urlId: stored?.urlId,
     description: stored?.description ?? description.get(),
     messages,
-    metadata: stored?.metadata ?? chatMetadata.get(),
-    snapshot,
+    metadata,
+    // Once auto-pushing to GitHub, Mongo only needs to track messages/metadata, not the full file blob.
+    snapshot: metadata?.githubUrl ? undefined : snapshot,
   });
 }
 
@@ -212,6 +221,37 @@ export function useChatHistory() {
                 metadata: remote.metadata,
               };
               snapshot = remote.snapshot;
+            }
+          }
+
+          /*
+           * Once a chat auto-pushes to GitHub, Mongo stops carrying the full file blob (see
+           * storeMessageHistory / persistFileSnapshot), so a synced-but-never-locally-opened
+           * chat lands here with messages but an empty snapshot. Pull the files straight from
+           * the linked repo instead — this is the fast path the "stop storing the big blob"
+           * change was for.
+           */
+          const githubUrl = storedMessages?.metadata?.githubUrl;
+          const snapshotHasFiles = snapshot?.files && Object.keys(snapshot.files).length > 0;
+
+          if (storedMessages && githubUrl && !snapshotHasFiles) {
+            try {
+              const response = await fetch(`/api/github-pull?repoUrl=${encodeURIComponent(githubUrl)}`);
+
+              if (response.ok) {
+                const { files } = (await response.json()) as { files: FileMap };
+                const lastMessageId = storedMessages.messages[storedMessages.messages.length - 1]?.id ?? '';
+
+                snapshot = { chatIndex: lastMessageId, files, summary: snapshot?.summary };
+
+                if (db) {
+                  await setSnapshot(db, storedMessages.id, snapshot);
+                }
+              } else {
+                console.error('Failed to pull files from GitHub:', await response.text());
+              }
+            } catch (error) {
+              console.error('Failed to pull files from GitHub:', error);
             }
           }
 
@@ -538,14 +578,25 @@ ${value.content}
       const trackingId = deriveTrackingId(allMessages);
 
       if (trackingId) {
+        const hasGithubRepo = Boolean(chatMetadata.get()?.githubUrl);
+
         const pushArgs = {
           trackingId,
           urlId: _urlId ?? urlId,
           description: description.get(),
           messages: allMessages,
           metadata: chatMetadata.get(),
-          snapshot,
+          // Once auto-pushing to GitHub, Mongo only needs to track messages/metadata, not the full file blob.
+          snapshot: hasGithubRepo ? undefined : snapshot,
         };
+
+        const persistGithubUrl = async (repoUrl: string) => {
+          const nextMetadata = { ...(chatMetadata.get() || {}), githubUrl: repoUrl } as IChatMetadata;
+          chatMetadata.set(nextMetadata);
+          await setMessages(db, finalChatId, allMessages, urlId, description.get(), undefined, nextMetadata);
+        };
+
+        const githubPushArgs = { trackingId, files: workbenchStore.files.get(), clientChatId: finalChatId };
 
         if (options?.immediate) {
           /*
@@ -554,8 +605,16 @@ ${value.content}
            */
           cancelPendingPush(trackingId);
           void pushChat(pushArgs);
+
+          cancelPendingGithubPush(trackingId);
+          void pushToGithub(githubPushArgs).then((result) => {
+            if (result.ok && result.repoUrl) {
+              void persistGithubUrl(result.repoUrl);
+            }
+          });
         } else {
           schedulePush(pushArgs);
+          scheduleGithubPush(githubPushArgs, (repoUrl) => void persistGithubUrl(repoUrl));
         }
       }
     },

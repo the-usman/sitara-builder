@@ -62,6 +62,10 @@ export async function serveAsset(req: Request, assetsPath: string): Promise<Resp
     headers.set('Content-Type', mimeType);
   }
 
+  // Required for WebContainer (needs SharedArrayBuffer) — see vite.config.ts for the dev-server equivalent.
+  headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+  headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+
   console.log('Serving file with mime type:', mimeType);
 
   const body = createReadableStreamFromReadable(createReadStream(fullPath));

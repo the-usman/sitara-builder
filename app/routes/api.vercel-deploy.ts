@@ -88,6 +88,29 @@ function toVercelProjectName(chatId: string): string {
     .slice(0, 100);
 }
 
+/*
+ * New projects (and projects inheriting team-level defaults) can come back from Vercel
+ * with "Vercel Authentication" and/or password protection enabled, which makes the
+ * deployed URL loadable only by someone logged into the shared Vercel account. Every
+ * project deployed through this shared token is meant to be a public site, so explicitly
+ * clear both protections after the project exists. Best-effort: a failure here shouldn't
+ * block the deployment itself.
+ */
+async function ensureProjectIsPublic(projectId: string, token: string): Promise<void> {
+  try {
+    await fetch(`https://api.vercel.com/v9/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ssoProtection: null, passwordProtection: null }),
+    });
+  } catch (error) {
+    console.error('Failed to clear Vercel deployment protection:', error);
+  }
+}
+
 // Existing action function for POST requests
 export async function action({ request, context }: ActionFunctionArgs) {
   const env = (context as any).cloudflare?.env;
@@ -185,6 +208,9 @@ export async function action({ request, context }: ActionFunctionArgs) {
         };
       }
     }
+
+    // Make sure the deployed link is publicly accessible, not gated behind the shared Vercel account
+    await ensureProjectIsPublic(targetProjectId as string, token);
 
     // Prepare files for deployment
     const deploymentFiles = [];

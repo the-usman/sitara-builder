@@ -7,6 +7,14 @@ export interface IChatMetadata {
   gitUrl: string;
   gitBranch?: string;
   netlifySiteId?: string;
+
+  /**
+   * The GitHub repo this chat auto-pushes to (repo name = the chat's trackingId), set by
+   * the auto-sync in chat-sync.client.ts / api.github-push.ts. Deliberately separate from
+   * `gitUrl`, which instead records the repo a chat was *imported from* — conflating the
+   * two would overwrite import provenance the first time auto-push runs.
+   */
+  githubUrl?: string;
 }
 
 const logger = createScopedLogger('ChatHistory');

@@ -128,6 +128,11 @@ declare global {
         cloudflare: {},
       });
 
+      // Required for WebContainer (needs SharedArrayBuffer) — without these the renderer
+      // isn't cross-origin isolated and WebContainer.boot() hangs forever with no error.
+      result.headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+      result.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+
       return result;
     } catch (err) {
       console.log('Error handling request:', {
