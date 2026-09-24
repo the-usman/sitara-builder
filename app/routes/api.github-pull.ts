@@ -60,6 +60,14 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   }
 
   const { owner, repo } = parsed;
+
+  // Optional commit to read instead of the branch head (used by version history). Commit SHAs only.
+  const refParam = url.searchParams.get('ref');
+
+  if (refParam && !/^[0-9a-f]{7,40}$/i.test(refParam)) {
+    return json({ error: 'ref must be a commit SHA' }, { status: 400 });
+  }
+
   const token = await requireProviderToken('github', env);
 
   try {
@@ -72,7 +80,7 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     const repoData = (await repoResponse.json()) as { default_branch: string };
     const branch = repoData.default_branch || 'main';
 
-    const treeResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`, {
+    const treeResponse = await fetch(`${GITHUB_API}/repos/${owner}/${repo}/git/trees/${refParam || branch}?recursive=1`, {
       headers: ghHeaders(token),
     });
 

@@ -3,6 +3,7 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER, MODEL_REGEX, PROVIDER_REGEX } from '~/
 import { IGNORE_PATTERNS, type FileMap } from './constants';
 import ignore from 'ignore';
 import type { ContextAnnotation } from '~/types/context';
+import { MAX_CONTEXT_CHARS, MAX_CONTEXT_FILE_CHARS, truncateText } from './prompt-limits';
 
 export function extractPropertiesFromMessage(message: Omit<Message, 'id'>): {
   model: string;
@@ -62,6 +63,8 @@ export function createFilesContext(files: FileMap, useRelativePath?: boolean) {
     return !ig.ignores(relPath);
   });
 
+  let budget = MAX_CONTEXT_CHARS;
+
   const fileContexts = filePaths
     .filter((x) => files[x] && files[x].type == 'file')
     .map((path) => {
@@ -71,18 +74,28 @@ export function createFilesContext(files: FileMap, useRelativePath?: boolean) {
         return '';
       }
 
-      const codeWithLinesNumbers = dirent.content
-        .split('\n')
-        // .map((v, i) => `${i + 1}|${v}`)
-        .join('\n');
-
       let filePath = path;
 
       if (useRelativePath) {
         filePath = path.replace('/home/project/', '');
       }
 
-      return `<boltAction type="file" filePath="${filePath}">${codeWithLinesNumbers}</boltAction>`;
+      /*
+       * Binary files (images, video, fonts) are stored base64-encoded, so inlining one can add millions of
+       * tokens to the prompt. The model only needs to know they exist; it references them by path.
+       */
+      if (dirent.isBinary) {
+        return `<boltAction type="file" filePath="${filePath}">[binary file omitted]</boltAction>`;
+      }
+
+      if (budget <= 0) {
+        return `<boltAction type="file" filePath="${filePath}">[omitted: context size limit reached]</boltAction>`;
+      }
+
+      const content = truncateText(dirent.content, Math.min(MAX_CONTEXT_FILE_CHARS, budget));
+      budget -= content.length;
+
+      return `<boltAction type="file" filePath="${filePath}">${content}</boltAction>`;
     });
 
   return `<boltArtifact id="code-content" title="Code Content" >\n${fileContexts.join('\n')}\n</boltArtifact>`;

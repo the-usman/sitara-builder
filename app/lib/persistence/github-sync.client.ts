@@ -1,6 +1,8 @@
 import { toast } from 'react-toastify';
 import { logStore } from '~/lib/stores/logs';
 import type { FileMap } from '~/lib/stores/files';
+import type { Message } from 'ai';
+import { MODEL_REGEX, PROVIDER_REGEX } from '~/utils/constants';
 
 const ENDPOINT = '/api/github-push';
 
@@ -11,7 +13,41 @@ export interface GithubPushArgs {
   trackingId: string;
   files: FileMap;
   commitMessage?: string;
+
+  /** Latest user prompt — lets the server's AI write a meaningful commit description. */
+  userPrompt?: string;
   clientChatId?: string;
+}
+
+/** Plain text of the most recent user message, used as context for AI commit messages. */
+export function getLastUserPrompt(messages: Message[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+
+    if (message.role !== 'user') {
+      continue;
+    }
+
+    const content = message.content as unknown;
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((part: any) => part?.type === 'text')
+              .map((part: any) => part.text)
+              .join('\n')
+          : '';
+
+    // Prompts are prefixed with [Model: ...] / [Provider: ...] markers — keep only what the user typed.
+    const cleaned = text.replace(MODEL_REGEX, '').replace(PROVIDER_REGEX, '').trim();
+
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+
+  return undefined;
 }
 
 export interface GithubPushResult {
@@ -47,6 +83,7 @@ export async function pushToGithub(args: GithubPushArgs): Promise<GithubPushResu
         trackingId: args.trackingId,
         files,
         commitMessage: args.commitMessage,
+        userPrompt: args.userPrompt,
         clientChatId: args.clientChatId,
       }),
     });

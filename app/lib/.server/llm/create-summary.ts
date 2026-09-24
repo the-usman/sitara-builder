@@ -4,6 +4,7 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER, PROVIDER_LIST } from '~/utils/constant
 import { extractCurrentContext, extractPropertiesFromMessage, simplifyBoltActions } from './utils';
 import { createScopedLogger } from '~/utils/logger';
 import { LLMManager } from '~/lib/modules/llm/manager';
+import { limitMessages } from './prompt-limits';
 
 const logger = createScopedLogger('create-summary');
 
@@ -169,7 +170,7 @@ ${summaryText}
 Below is the chat after that:
 ---
 <new_chats>
-${slicedMessages
+${limitMessages(slicedMessages)
   .map((x) => {
     return `---\n[${x.role}] ${extractTextContent(x)}\n---`;
   })

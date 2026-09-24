@@ -377,7 +377,12 @@ export async function getSnapshot(db: IDBDatabase, chatId: string): Promise<Snap
   });
 }
 
-export async function setSnapshot(db: IDBDatabase, chatId: string, snapshot: Snapshot): Promise<void> {
+export async function setSnapshot(
+  db: IDBDatabase,
+  chatId: string,
+  snapshot: Snapshot,
+  options: { recordHistory?: boolean } = {},
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction('snapshots', 'readwrite');
     const store = transaction.objectStore('snapshots');
@@ -386,6 +391,14 @@ export async function setSnapshot(db: IDBDatabase, chatId: string, snapshot: Sna
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
   });
+
+  /*
+   * Mid-stream saves overwrite the "latest" snapshot only. Recording a full history copy (plus pruning)
+   * on every save made streaming lag badly; history gets one entry per finished turn instead.
+   */
+  if (options.recordHistory === false) {
+    return;
+  }
 
   try {
     await appendSnapshotHistory(db, chatId, snapshot);

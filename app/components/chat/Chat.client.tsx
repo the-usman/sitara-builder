@@ -98,6 +98,15 @@ export function Chat() {
   );
 }
 
+/*
+ * While a response streams, messages change ~20x/second. Persisting the full chat + a snapshot of every
+ * project file that often froze the browser, so mid-stream saves are limited to one per interval (kept under the
+ * 4s GitHub/cloud push debounce so those still only fire once streaming stops); the
+ * end-of-response save (immediate) always runs and is what makes the chat durable.
+ */
+const STREAMING_PERSIST_INTERVAL_MS = 3000;
+let lastStreamingPersist = 0;
+
 const processSampledMessages = createSampler(
   (options: {
     messages: Message[];
@@ -110,6 +119,16 @@ const processSampledMessages = createSampler(
     parseMessages(messages, isLoading);
 
     if (messages.length > initialMessages.length) {
+      if (isLoading) {
+        const now = Date.now();
+
+        if (now - lastStreamingPersist < STREAMING_PERSIST_INTERVAL_MS) {
+          return;
+        }
+
+        lastStreamingPersist = now;
+      }
+
       storeMessageHistory(messages).catch((error) => toast.error(error.message));
     }
   },

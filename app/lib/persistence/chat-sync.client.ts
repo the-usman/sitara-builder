@@ -3,6 +3,7 @@ import { toast } from 'react-toastify';
 import type { Snapshot } from './types';
 import type { IChatMetadata } from './db';
 import { logStore } from '~/lib/stores/logs';
+import { slimSnapshotFiles } from './snapshot-slim';
 
 const ENDPOINT = '/api/chat-sync';
 
@@ -113,7 +114,7 @@ export async function pushChat(args: PushChatArgs): Promise<boolean> {
     let snapshot: WireSnapshot | undefined;
 
     if (args.snapshot) {
-      const { base64, uncompressedBytes } = await gzipToBase64(args.snapshot.files);
+      const { base64, uncompressedBytes } = await gzipToBase64(slimSnapshotFiles(args.snapshot.files));
       snapshot = {
         chatIndex: args.snapshot.chatIndex,
         summary: args.snapshot.summary,

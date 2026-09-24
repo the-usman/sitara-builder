@@ -11,6 +11,7 @@ import { createFilesContext, extractPropertiesFromMessage } from './utils';
 import { getActiveCustomPromptSkills, getDisabledBuiltinSkillNames } from '~/lib/skills.server';
 import { promptSkills, selectSkills, type PromptSkill } from '~/lib/common/prompts/skills';
 import { selectSkillsViaLLM } from './select-skills';
+import { limitMessages } from './prompt-limits';
 
 export type Messages = Message[];
 
@@ -269,7 +270,7 @@ ${lockedFilesListString}
     model: modelInstance,
     system: systemPrompt,
     maxTokens: dynamicMaxTokens,
-    messages: convertToCoreMessages(processedMessages as any),
+    messages: convertToCoreMessages(limitMessages(processedMessages as any) as any),
     ...options,
   });
 }

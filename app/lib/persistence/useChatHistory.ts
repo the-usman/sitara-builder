@@ -21,7 +21,7 @@ import {
 import type { FileMap } from '~/lib/stores/files';
 import type { Snapshot } from './types';
 import { cancelPendingPush, deriveTrackingId, pullChat, pushChat, schedulePush } from './chat-sync.client';
-import { cancelPendingGithubPush, pushToGithub, scheduleGithubPush } from './github-sync.client';
+import { cancelPendingGithubPush, getLastUserPrompt, pushToGithub, scheduleGithubPush } from './github-sync.client';
 import { webcontainer } from '~/lib/webcontainer';
 import { writeSnapshotToContainer } from './snapshotFiles.client';
 import { detectProjectCommands, createCommandActionsString } from '~/utils/projectCommands';
@@ -102,7 +102,7 @@ export async function persistFileSnapshot(): Promise<boolean> {
 
   if (metadata?.githubUrl) {
     // GitHub is the source of truth once connected — keep pushing there, skip the heavy Mongo blob.
-    scheduleGithubPush({ trackingId, files: snapshot.files });
+    scheduleGithubPush({ trackingId, files: snapshot.files, userPrompt: getLastUserPrompt(messages) });
   }
 
   return pushChat({
@@ -400,6 +400,7 @@ ${value.content}
       files: FileMap,
       _chatId?: string | undefined,
       chatSummary?: string,
+      recordHistory = true,
     ): Promise<Snapshot | undefined> => {
       const id = _chatId || chatId.get();
 
@@ -415,7 +416,7 @@ ${value.content}
 
       // localStorage.setItem(`snapshot:${id}`, JSON.stringify(snapshot)); // Remove localStorage usage
       try {
-        await setSnapshot(db, id, snapshot);
+        await setSnapshot(db, id, snapshot, { recordHistory });
       } catch (error) {
         console.error('Failed to save snapshot:', error);
         toast.error('Failed to save chat snapshot.');
@@ -530,6 +531,8 @@ ${value.content}
         workbenchStore.files.get(),
         _urlId,
         chatSummary,
+        // Only the end-of-turn save (immediate) becomes a version-history entry; mid-stream saves would flood it.
+        options?.immediate === true,
       );
 
       if (!description.get() && firstArtifact?.title) {
@@ -596,7 +599,12 @@ ${value.content}
           await setMessages(db, finalChatId, allMessages, urlId, description.get(), undefined, nextMetadata);
         };
 
-        const githubPushArgs = { trackingId, files: workbenchStore.files.get(), clientChatId: finalChatId };
+        const githubPushArgs = {
+          trackingId,
+          files: workbenchStore.files.get(),
+          userPrompt: getLastUserPrompt(allMessages),
+          clientChatId: finalChatId,
+        };
 
         if (options?.immediate) {
           /*

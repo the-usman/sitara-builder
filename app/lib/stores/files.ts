@@ -597,7 +597,25 @@ export class FilesStore {
 
     // Set up file watcher
     webcontainer.internal.watchPaths(
-      { include: [`${WORK_DIR}/**`], exclude: ['**/node_modules', '.git'], includeContent: true },
+      {
+        include: [`${WORK_DIR}/**`],
+
+        // Generated/cache folders churn thousands of files during installs and dev-server builds; nothing here edits them.
+        exclude: [
+          '**/node_modules',
+          '.git',
+          '**/.next',
+          '**/.nuxt',
+          '**/.svelte-kit',
+          '**/.vite',
+          '**/.turbo',
+          '**/.cache',
+          '**/.parcel-cache',
+          '**/.vercel',
+          '**/coverage',
+        ],
+        includeContent: true,
+      },
       bufferWatchEvents(100, this.#processEventBuffer.bind(this)),
     );
 
