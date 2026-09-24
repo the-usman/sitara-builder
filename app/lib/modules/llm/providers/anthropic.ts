@@ -5,6 +5,28 @@ import type { IProviderSetting } from '~/types/model';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { withSupportedSamplingParams } from '~/lib/modules/llm/sampling-params';
 
+/*
+ * Newer Claude models (e.g. Opus 5) think by default, and the installed
+ * `@ai-sdk/anthropic` can only send `thinking: enabled`, never `disabled`.
+ * Inject `thinking: { type: 'disabled' }` into every /messages request that
+ * doesn't set it, so responses are plain text with no thinking blocks.
+ */
+const fetchWithThinkingDisabled: typeof fetch = async (input, init) => {
+  if (typeof init?.body === 'string') {
+    try {
+      const body = JSON.parse(init.body);
+
+      if (body && typeof body === 'object' && body.thinking === undefined) {
+        init = { ...init, body: JSON.stringify({ ...body, thinking: { type: 'disabled' } }) };
+      }
+    } catch {
+      // not JSON — send unchanged
+    }
+  }
+
+  return fetch(input, init);
+};
+
 export default class AnthropicProvider extends BaseProvider {
   name = 'Anthropic';
   getApiKeyLink = 'https://console.anthropic.com/settings/keys';
@@ -96,6 +118,7 @@ export default class AnthropicProvider extends BaseProvider {
     });
     const anthropic = createAnthropic({
       apiKey,
+      fetch: fetchWithThinkingDisabled,
     });
 
     return withSupportedSamplingParams(anthropic(model));

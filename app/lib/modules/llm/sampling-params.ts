@@ -30,22 +30,50 @@ export function rejectsSamplingParams(modelId: string): boolean {
   return MODELS_REJECTING_SAMPLING_PARAMS.some((pattern) => pattern.test(normalizedId));
 }
 
+/*
+ * Newer Claude models stream thinking blocks. `@ai-sdk/anthropic` 1.1.x surfaces
+ * their signatures as `reasoning-signature` / `redacted-reasoning` chunks, which
+ * `ai` 4.1.x does not know about and throws on ("Unhandled chunk type"),
+ * killing the response. The signatures are only needed to replay thinking
+ * blocks back to the API, which this app doesn't do, so they are dropped.
+ */
+const UNSUPPORTED_STREAM_CHUNK_TYPES = new Set<string>(['reasoning-signature', 'redacted-reasoning']);
+
 /**
- * Wraps a Claude model so the sampling parameters are dropped before the request
- * leaves the SDK, for the models that no longer accept them. Models that still
- * support sampling parameters are returned untouched.
+ * Wraps a Claude model so that
+ *  - the sampling parameters are dropped for the models that no longer accept them, and
+ *  - stream chunks the installed `ai` version can't handle are filtered out.
  */
 export function withSupportedSamplingParams(model: LanguageModelV1): LanguageModelV1 {
-  if (!rejectsSamplingParams(model.modelId)) {
-    return model;
-  }
+  const dropSamplingParams = rejectsSamplingParams(model.modelId);
 
   return wrapLanguageModel({
     model,
     middleware: {
       transformParams: async ({ params }) => {
+        if (!dropSamplingParams) {
+          return params;
+        }
+
         const { temperature: _temperature, topP: _topP, topK: _topK, ...supportedParams } = params;
+
         return supportedParams;
+      },
+      wrapStream: async ({ doStream }) => {
+        const { stream, ...rest } = await doStream();
+
+        return {
+          stream: stream.pipeThrough(
+            new TransformStream({
+              transform(chunk, controller) {
+                if (!UNSUPPORTED_STREAM_CHUNK_TYPES.has((chunk as { type: string }).type)) {
+                  controller.enqueue(chunk);
+                }
+              },
+            }),
+          ),
+          ...rest,
+        };
       },
     },
   });
