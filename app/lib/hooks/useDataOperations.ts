@@ -3,6 +3,7 @@ import { toast } from 'react-toastify';
 import { ImportExportService } from '~/lib/services/importExportService';
 import { useIndexedDB } from '~/lib/hooks/useIndexedDB';
 import { generateId } from 'ai';
+import { rebuildChatIndex } from '~/lib/persistence/db';
 
 interface UseDataOperationsProps {
   /**
@@ -654,6 +655,9 @@ export function useDataOperations({
           transaction.onerror = reject;
         });
 
+        // Chats were written directly, so refresh the sidebar index.
+        await rebuildChatIndex(db);
+
         // Step 6: Complete
         showProgress('Completing import', 100);
 
@@ -1106,6 +1110,8 @@ export function useDataOperations({
             transaction.onerror = reject;
           });
 
+          await rebuildChatIndex(db);
+
           // Dismiss progress toast before showing success toast
           toast.dismiss('progress-toast');
 
@@ -1153,6 +1159,8 @@ export function useDataOperations({
             chatTransaction.oncomplete = resolve;
             chatTransaction.onerror = reject;
           });
+
+          await rebuildChatIndex(db);
 
           // Dismiss progress toast before showing success toast
           toast.dismiss('progress-toast');

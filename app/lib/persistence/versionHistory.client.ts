@@ -148,7 +148,7 @@ export async function restoreGithubVersion(repoUrl: string, version: GithubVersi
     await writeSnapshotToContainer(snapshot, workbenchStore.files.get());
 
     if (db && id) {
-      await setSnapshot(db, id, snapshot);
+      await setSnapshot(db, id, snapshot, { recordHistory: false });
     }
 
     toast.success(`Restored: ${version.title}`);

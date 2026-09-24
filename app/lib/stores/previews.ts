@@ -67,6 +67,7 @@ export class PreviewsStore {
 
       localStorage.setItem = (...args) => {
         originalSetItem.apply(localStorage, args);
+        this.#changedStorageKeys.add(String(args[0]));
         this._scheduleStorageSync();
       };
     }
@@ -87,37 +88,30 @@ export class PreviewsStore {
     return '';
   }
 
-  // Sync storage data between tabs
+  /*
+   * Sync storage data between tabs. Only keys whose value actually differs are written, and previews are
+   * NOT reloaded: the preview iframe lives on a different origin and cannot see this storage, so reloading
+   * it here only threw away the running page (very costly for heavy 3D/animated sites) every time anything
+   * in another tab touched localStorage.
+   */
   private _syncStorage(storage: Record<string, string>) {
     if (typeof window !== 'undefined') {
+      const originalSetItem = Object.getPrototypeOf(localStorage).setItem;
+
       Object.entries(storage).forEach(([key, value]) => {
         try {
-          const originalSetItem = Object.getPrototypeOf(localStorage).setItem;
-          originalSetItem.call(localStorage, key, value);
+          if (localStorage.getItem(key) !== value) {
+            originalSetItem.call(localStorage, key, value);
+          }
         } catch (error) {
           console.error('[Preview] Error syncing storage:', error);
         }
       });
-
-      // Force a refresh after syncing storage
-      const previews = this.previews.get();
-      previews.forEach((preview) => {
-        const previewId = this.getPreviewId(preview.baseUrl);
-
-        if (previewId) {
-          this.refreshPreview(previewId);
-        }
-      });
-
-      // Reload preview iframes so they pick up the synced storage
-      if (typeof window !== 'undefined' && window.location) {
-        document.querySelectorAll<HTMLIFrameElement>('iframe[title="preview"]').forEach((iframe) => {
-          // eslint-disable-next-line no-self-assign
-          iframe.src = iframe.src;
-        });
-      }
     }
   }
+
+  // Keys written since the last broadcast — only these are sent, not the whole of localStorage
+  #changedStorageKeys = new Set<string>();
 
   // Debounce so bursts of localStorage writes collapse into a single broadcast
   #storageSyncTimeout: NodeJS.Timeout | null = null;
@@ -138,12 +132,18 @@ export class PreviewsStore {
     if (typeof window !== 'undefined') {
       const storage: Record<string, string> = {};
 
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
+      for (const key of this.#changedStorageKeys) {
+        const value = localStorage.getItem(key);
 
-        if (key) {
-          storage[key] = localStorage.getItem(key) || '';
+        if (value !== null) {
+          storage[key] = value;
         }
+      }
+
+      this.#changedStorageKeys.clear();
+
+      if (Object.keys(storage).length === 0) {
+        return;
       }
 
       this.#storageChannel?.postMessage({
@@ -173,19 +173,23 @@ export class PreviewsStore {
         {
           // Only watch specific file types that affect the preview
           include: ['**/*.html', '**/*.css', '**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx', '**/*.json'],
-          exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/coverage/**'],
+          exclude: [
+            '**/node_modules/**',
+            '**/.git/**',
+            '**/dist/**',
+            '**/build/**',
+            '**/coverage/**',
+            '**/.next/**',
+            '**/.nuxt/**',
+            '**/.svelte-kit/**',
+            '**/.vite/**',
+            '**/.turbo/**',
+            '**/.cache/**',
+            '**/.parcel-cache/**',
+            '**/.vercel/**',
+          ],
         },
-        async (_events) => {
-          const previews = this.previews.get();
-
-          for (const preview of previews) {
-            const previewId = this.getPreviewId(preview.baseUrl);
-
-            if (previewId) {
-              this.broadcastFileChange(previewId);
-            }
-          }
-        },
+        () => this.#scheduleFileChangeBroadcast(),
       );
     } catch (error) {
       console.error('[Preview] Error setting up watchers:', error);
@@ -219,6 +223,32 @@ export class PreviewsStore {
         this.broadcastUpdate(url);
       }
     });
+  }
+
+  /*
+   * The watcher fires for every file the AI writes or npm touches. Refreshing the preview on each event meant a
+   * full page reload per file — which also defeats the dev server's hot reload. Wait until the writes go quiet
+   * and refresh once.
+   */
+  #fileChangeTimeout: NodeJS.Timeout | null = null;
+  #FILE_CHANGE_QUIET_MS = 1000;
+
+  #scheduleFileChangeBroadcast() {
+    if (this.#fileChangeTimeout) {
+      clearTimeout(this.#fileChangeTimeout);
+    }
+
+    this.#fileChangeTimeout = setTimeout(() => {
+      this.#fileChangeTimeout = null;
+
+      for (const preview of this.previews.get()) {
+        const previewId = this.getPreviewId(preview.baseUrl);
+
+        if (previewId) {
+          this.broadcastFileChange(previewId);
+        }
+      }
+    }, this.#FILE_CHANGE_QUIET_MS);
   }
 
   // Helper to extract preview ID from URL

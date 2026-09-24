@@ -246,6 +246,9 @@ export const ChatImpl = memo(
       setData,
     } = useChat({
       api: '/api/chat',
+
+      // Re-render the chat at most ~10x/second while streaming instead of once per token.
+      experimental_throttle: 100,
       body: {
         apiKeys,
         files,

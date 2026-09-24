@@ -35,7 +35,20 @@ export default class AnthropicProvider extends BaseProvider {
     apiTokenKey: 'ANTHROPIC_API_KEY',
   };
 
+  /*
+   * Current models are listed statically so a request never has to wait on a live /v1/models lookup
+   * just to resolve the model's token limit.
+   */
   staticModels: ModelInfo[] = [
+    { name: 'claude-opus-5-5', label: 'Claude Opus 5.5', provider: 'Anthropic', maxTokenAllowed: 32000 },
+    { name: 'claude-sonnet-5', label: 'Claude Sonnet 5', provider: 'Anthropic', maxTokenAllowed: 32000 },
+    { name: 'claude-fable-5-1', label: 'Claude Fable 5.1', provider: 'Anthropic', maxTokenAllowed: 32000 },
+    {
+      name: 'claude-haiku-4-5-20251001',
+      label: 'Claude Haiku 4.5',
+      provider: 'Anthropic',
+      maxTokenAllowed: 32000,
+    },
     {
       name: 'claude-3-7-sonnet-20250219',
       label: 'Claude 3.7 Sonnet',

@@ -162,8 +162,17 @@ export async function streamText(props: {
     },
   };
 
+  /*
+   * Picking skills is a tiny classification task; running it on a big model (e.g. Opus) adds seconds of
+   * latency before the answer even starts. Use the fast model when the provider has one.
+   */
+  const routerModel =
+    provider.name === 'Anthropic'
+      ? provider.getModelInstance({ model: 'claude-haiku-4-5-20251001', serverEnv, apiKeys, providerSettings })
+      : modelInstance;
+
   const llmSelectedSkills = await selectSkillsViaLLM({
-    model: modelInstance,
+    model: routerModel,
     userMessages: userMessageTexts,
     catalog: [...promptSkills, ...customSkills]
       .filter((s) => !disabledSkills.includes(s.name))

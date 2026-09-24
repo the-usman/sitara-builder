@@ -19,6 +19,38 @@ export interface IChatMetadata {
 
 const logger = createScopedLogger('ChatHistory');
 
+export const CHAT_INDEX_STORE = 'chatIndex';
+
+/** The few fields the sidebar needs for a chat — kept in their own store so listing chats stays cheap. */
+export interface ChatIndexEntry {
+  id: string;
+  urlId?: string;
+  description?: string;
+  timestamp: string;
+  metadata?: IChatMetadata;
+
+  /** First user message id — stable across devices, used to match local chats with synced ones. */
+  trackingId?: string;
+}
+
+export function toChatIndexEntry(chat: {
+  id: string;
+  urlId?: string;
+  description?: string;
+  timestamp: string;
+  metadata?: IChatMetadata;
+  messages?: Message[];
+}): ChatIndexEntry {
+  return {
+    id: chat.id,
+    urlId: chat.urlId,
+    description: chat.description,
+    timestamp: chat.timestamp,
+    metadata: chat.metadata,
+    trackingId: chat.messages?.find((message) => message.role === 'user')?.id,
+  };
+}
+
 // this is used at the top level and never rejects
 export async function openDatabase(): Promise<IDBDatabase | undefined> {
   if (typeof indexedDB === 'undefined') {
@@ -27,7 +59,7 @@ export async function openDatabase(): Promise<IDBDatabase | undefined> {
   }
 
   return new Promise((resolve) => {
-    const request = indexedDB.open('boltHistory', 4);
+    const request = indexedDB.open('boltHistory', 5);
 
     request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
       const db = (event.target as IDBOpenDBRequest).result;
@@ -70,6 +102,25 @@ export async function openDatabase(): Promise<IDBDatabase | undefined> {
           store.createIndex('chatId', 'chatId', { unique: false });
         }
       }
+
+      if (oldVersion < 5 && upgradeTransaction) {
+        // Small per-chat rows for the sidebar, so listing chats never has to read whole message histories.
+        if (!db.objectStoreNames.contains(CHAT_INDEX_STORE)) {
+          db.createObjectStore(CHAT_INDEX_STORE, { keyPath: 'id' });
+        }
+
+        const indexStore = upgradeTransaction.objectStore(CHAT_INDEX_STORE);
+        const cursorRequest = upgradeTransaction.objectStore('chats').openCursor();
+
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+
+          if (cursor) {
+            indexStore.put(toChatIndexEntry(cursor.value));
+            cursor.continue();
+          }
+        };
+      }
     };
 
     request.onsuccess = (event: Event) => {
@@ -92,6 +143,70 @@ export async function getAll(db: IDBDatabase): Promise<ChatHistoryItem[]> {
     request.onsuccess = () => resolve(request.result as ChatHistoryItem[]);
     request.onerror = () => reject(request.error);
   });
+}
+
+function countStore(db: IDBDatabase, storeName: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(storeName, 'readonly').objectStore(storeName).count();
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+/**
+ * Rebuilds the sidebar index from the chats store. Only needed when something wrote chats without going
+ * through `setMessages` (bulk import/undo) — a one-off full read, after which listing is cheap again.
+ */
+export async function rebuildChatIndex(db: IDBDatabase): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(['chats', CHAT_INDEX_STORE], 'readwrite');
+    const indexStore = transaction.objectStore(CHAT_INDEX_STORE);
+    indexStore.clear();
+
+    const cursorRequest = transaction.objectStore('chats').openCursor();
+
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+
+      if (cursor) {
+        indexStore.put(toChatIndexEntry(cursor.value));
+        cursor.continue();
+      }
+    };
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+/**
+ * Listing for the sidebar. Reads only the small `chatIndex` rows (title, ids, timestamp), never the message
+ * histories, so it stays fast however many chats there are. If the index has drifted from the chats store
+ * (e.g. rows written by an older build), it is rebuilt once.
+ */
+export async function getAllChatSummaries(db: IDBDatabase): Promise<ChatHistoryItem[]> {
+  const [chatCount, indexCount] = await Promise.all([countStore(db, 'chats'), countStore(db, CHAT_INDEX_STORE)]);
+
+  if (chatCount !== indexCount) {
+    logger.warn(`Chat index out of date (${indexCount} vs ${chatCount} chats), rebuilding`);
+    await rebuildChatIndex(db);
+  }
+
+  const entries = await new Promise<ChatIndexEntry[]>((resolve, reject) => {
+    const request = db.transaction(CHAT_INDEX_STORE, 'readonly').objectStore(CHAT_INDEX_STORE).getAll();
+
+    request.onsuccess = () => resolve(request.result as ChatIndexEntry[]);
+    request.onerror = () => reject(request.error);
+  });
+
+  return entries.map(({ trackingId, ...entry }) => ({
+    ...entry,
+
+    // Callers only use the messages to derive the tracking id, so a stub with the first user message is enough.
+    messages: trackingId ? [{ id: trackingId, role: 'user' as const, content: '' }] : [],
+  }));
 }
 
 /**
@@ -120,7 +235,7 @@ export async function setMessages(
   metadata?: IChatMetadata,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction('chats', 'readwrite');
+    const transaction = db.transaction(['chats', CHAT_INDEX_STORE], 'readwrite');
     const store = transaction.objectStore('chats');
 
     if (timestamp && isNaN(Date.parse(timestamp))) {
@@ -128,17 +243,21 @@ export async function setMessages(
       return;
     }
 
-    const request = store.put({
+    const chat = {
       id,
       messages,
       urlId,
       description,
       timestamp: timestamp ?? new Date().toISOString(),
       metadata,
-    });
+    };
 
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
+    store.put(chat);
+    transaction.objectStore(CHAT_INDEX_STORE).put(toChatIndexEntry(chat));
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
   });
 }
 
@@ -171,7 +290,8 @@ export async function getMessagesById(db: IDBDatabase, id: string): Promise<Chat
 
 export async function deleteById(db: IDBDatabase, id: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(['chats', 'snapshots'], 'readwrite'); // Add snapshots store to transaction
+    const transaction = db.transaction(['chats', 'snapshots', CHAT_INDEX_STORE], 'readwrite');
+    transaction.objectStore(CHAT_INDEX_STORE).delete(id);
     const chatStore = transaction.objectStore('chats');
     const snapshotStore = transaction.objectStore('snapshots');
 
@@ -415,7 +535,8 @@ export interface SnapshotHistoryEntry {
   timestamp: string;
 }
 
-const MAX_SNAPSHOT_HISTORY_PER_CHAT = 15;
+// Each entry is a full copy of the project's files (media included), so keep this small.
+const MAX_SNAPSHOT_HISTORY_PER_CHAT = 5;
 
 async function pruneSnapshotHistory(store: IDBObjectStore, chatId: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -496,7 +617,7 @@ export async function getSnapshotHistoryEntry(
   });
 }
 
-async function deleteSnapshotHistoryForChat(db: IDBDatabase, chatId: string): Promise<void> {
+export async function deleteSnapshotHistoryForChat(db: IDBDatabase, chatId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction('snapshotHistory', 'readwrite');
     const store = transaction.objectStore('snapshotHistory');

@@ -13,6 +13,7 @@ import {
   setMessages,
   duplicateChat,
   createChatFromMessages,
+  deleteSnapshotHistoryForChat,
   getSnapshot,
   setSnapshot,
   getMessagesByTrackingId,
@@ -86,7 +87,8 @@ export async function persistFileSnapshot(): Promise<boolean> {
   };
 
   try {
-    await setSnapshot(db, id, snapshot);
+    // GitHub-linked chats keep their version history on GitHub, not as extra local copies.
+    await setSnapshot(db, id, snapshot, { recordHistory: !(stored?.metadata ?? chatMetadata.get())?.githubUrl });
   } catch (error) {
     console.error('Failed to save file snapshot locally:', error);
     return false;
@@ -209,7 +211,7 @@ export function useChatHistory() {
               );
 
               if (remote.snapshot) {
-                await setSnapshot(db, localId, remote.snapshot);
+                await setSnapshot(db, localId, remote.snapshot, { recordHistory: false });
               }
 
               storedMessages = {
@@ -245,7 +247,7 @@ export function useChatHistory() {
                 snapshot = { chatIndex: lastMessageId, files, summary: snapshot?.summary };
 
                 if (db) {
-                  await setSnapshot(db, storedMessages.id, snapshot);
+                  await setSnapshot(db, storedMessages.id, snapshot, { recordHistory: false });
                 }
               } else {
                 console.error('Failed to pull files from GitHub:', await response.text());
@@ -531,8 +533,9 @@ ${value.content}
         workbenchStore.files.get(),
         _urlId,
         chatSummary,
-        // Only the end-of-turn save (immediate) becomes a version-history entry; mid-stream saves would flood it.
-        options?.immediate === true,
+        // Only the end-of-turn save (immediate) becomes a local version-history entry, and only for chats
+        // not linked to GitHub (GitHub commits are the history for those).
+        options?.immediate === true && !chatMetadata.get()?.githubUrl,
       );
 
       if (!description.get() && firstArtifact?.title) {
@@ -595,8 +598,14 @@ ${value.content}
 
         const persistGithubUrl = async (repoUrl: string) => {
           const nextMetadata = { ...(chatMetadata.get() || {}), githubUrl: repoUrl } as IChatMetadata;
+          const alreadyLinked = Boolean(chatMetadata.get()?.githubUrl);
           chatMetadata.set(nextMetadata);
           await setMessages(db, finalChatId, allMessages, urlId, description.get(), undefined, nextMetadata);
+
+          // History now lives in the GitHub repo; free the local full-project copies.
+          if (!alreadyLinked) {
+            await deleteSnapshotHistoryForChat(db, finalChatId).catch(console.error);
+          }
         };
 
         const githubPushArgs = {

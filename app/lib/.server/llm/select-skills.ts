@@ -6,6 +6,7 @@ const logger = createScopedLogger('select-skills');
 // Keep the router call tiny: short message excerpts, near-zero output tokens
 const MAX_MESSAGE_CHARS = 600;
 const MAX_USER_MESSAGES = 4;
+const ROUTER_TIMEOUT_MS = 6000;
 
 /**
  * Ask a small LLM call to decide which skills the main response needs.
@@ -38,6 +39,9 @@ export async function selectSkillsViaLLM(props: {
       model,
       maxTokens: 120,
       temperature: 0,
+
+      // The router runs before the answer starts streaming — never let it hold the response up.
+      abortSignal: AbortSignal.timeout(ROUTER_TIMEOUT_MS),
       system:
         'You route which specialized instruction modules ("skills") an AI website builder needs to answer the next user request. ' +
         'Reply ONLY with a JSON array of skill names, e.g. ["ui-ux-design","threejs-3d"]. ' +
