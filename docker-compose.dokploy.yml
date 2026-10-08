@@ -89,6 +89,13 @@ services:
       CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
       CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
 
+      # --- Remote preview (Vercel Sandbox) ----------------------------------------
+      # With VERCEL_TOKEN plus these two set, npm install and dev servers run in a Vercel
+      # Sandbox instead of the user's browser. Leave unset to keep in-browser previews.
+      VERCEL_TEAM_ID: ${VERCEL_TEAM_ID:-}
+      VERCEL_PROJECT_ID: ${VERCEL_PROJECT_ID:-}
+      VERCEL_SANDBOX_REGION: ${VERCEL_SANDBOX_REGION:-syd1}
+
       # --- Misc -----------------------------------------------------------------
       VITE_LOG_LEVEL: ${VITE_LOG_LEVEL:-info}
       DEFAULT_NUM_CTX: ${DEFAULT_NUM_CTX:-32768}

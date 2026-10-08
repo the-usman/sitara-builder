@@ -6,6 +6,8 @@ import { PortDropdown } from './PortDropdown';
 import { ScreenshotSelector } from './ScreenshotSelector';
 import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
 import { ExpoQrModal } from '~/components/workbench/ExpoQrModal';
+import { remotePreview } from '~/lib/sandbox/remote-sandbox.client';
+import { RemotePreviewPanel } from './RemotePreviewPanel';
 
 type ResizeSide = 'left' | 'right' | null;
 
@@ -48,6 +50,12 @@ const WINDOW_SIZES: WindowSize[] = [
 ];
 
 export const Preview = memo(() => {
+  const remoteStatus = useStore(remotePreview).status;
+
+  return remoteStatus === 'idle' ? <BrowserPreview /> : <RemotePreviewPanel />;
+});
+
+const BrowserPreview = memo(() => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);

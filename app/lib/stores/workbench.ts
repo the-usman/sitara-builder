@@ -8,6 +8,7 @@ import { unreachable } from '~/utils/unreachable';
 import { EditorStore } from './editor';
 import { FilesStore, type FileMap } from './files';
 import { PreviewsStore } from './previews';
+import { startRemoteFileSync } from '~/lib/sandbox/remote-sandbox.client';
 import { TerminalStore } from './terminal';
 import JSZip from 'jszip';
 import fileSaver from 'file-saver';
@@ -58,6 +59,10 @@ export class WorkbenchStore {
   artifactIdList: string[] = [];
   #globalExecutionQueue = Promise.resolve();
   constructor() {
+    if (typeof window !== 'undefined') {
+      startRemoteFileSync(this.#filesStore.files);
+    }
+
     if (import.meta.hot) {
       import.meta.hot.data.artifacts = this.artifacts;
       import.meta.hot.data.unsavedFiles = this.unsavedFiles;

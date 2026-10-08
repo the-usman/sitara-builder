@@ -28,6 +28,7 @@ import { PushToGitHubDialog } from '~/components/@settings/tabs/connections/comp
 import { VersionHistoryDialog } from './VersionHistoryDialog.client';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { usePreviewStore } from '~/lib/stores/previews';
+import { remotePreview } from '~/lib/sandbox/remote-sandbox.client';
 
 interface WorkspaceProps {
   chatStarted?: boolean;
@@ -290,7 +291,9 @@ export const Workbench = memo(
 
     // const modifiedFiles = Array.from(useStore(workbenchStore.unsavedFiles).keys());
 
-    const hasPreview = useStore(computed(workbenchStore.previews, (previews) => previews.length > 0));
+    const hasBrowserPreview = useStore(computed(workbenchStore.previews, (previews) => previews.length > 0));
+    const hasRemotePreview = useStore(computed(remotePreview, (state) => state.status !== 'idle'));
+    const hasPreview = hasBrowserPreview || hasRemotePreview;
     const showWorkbench = useStore(workbenchStore.showWorkbench);
     const selectedFile = useStore(workbenchStore.selectedFile);
     const currentDocument = useStore(workbenchStore.currentDocument);

@@ -6,6 +6,7 @@ import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import type { ActionCallbackData } from './message-parser';
 import type { BoltShell } from '~/utils/shell';
+import { isRemoteSandboxEnabled, runRemoteShell, startRemoteDevServer } from '~/lib/sandbox/remote-sandbox.client';
 
 const logger = createScopedLogger('ActionRunner');
 
@@ -252,6 +253,17 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
+    // Remote preview: the command runs in the chat's Vercel Sandbox, not the browser.
+    if (await isRemoteSandboxEnabled()) {
+      const resp = await runRemoteShell(action.content, this.#shellTerminal()?.terminal);
+
+      if (resp.exitCode !== 0) {
+        throw new ActionCommandError(`Failed To Execute Shell Command`, resp.output || 'No Output Available');
+      }
+
+      return;
+    }
+
     const shell = this.#shellTerminal();
     await shell.ready();
 
@@ -277,6 +289,16 @@ export class ActionRunner {
 
     if (!this.#shellTerminal) {
       unreachable('Shell terminal not found');
+    }
+
+    if (await isRemoteSandboxEnabled()) {
+      const resp = await startRemoteDevServer(action.content, this.#shellTerminal()?.terminal);
+
+      if (resp.exitCode !== 0) {
+        throw new ActionCommandError('Failed To Start Application', resp.output || 'No Output Available');
+      }
+
+      return { exitCode: 0, output: resp.output };
     }
 
     const shell = this.#shellTerminal();

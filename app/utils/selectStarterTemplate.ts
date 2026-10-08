@@ -1,113 +1,27 @@
 import ignore from 'ignore';
 import type { ProviderInfo } from '~/types/model';
-import type { Template } from '~/types/template';
 import { STARTER_TEMPLATES } from './constants';
 
-const starterTemplateSelectionPrompt = (templates: Template[]) => `
-You are an experienced developer who helps people choose the best starter template for their projects, Vite is preferred.
+/*
+ * Next.js is the only supported stack, so every new chat starts from the same template. This
+ * used to be an extra LLM round-trip choosing between a dozen frameworks before the first reply.
+ */
+export const NEXTJS_TEMPLATE_NAME = 'NextJS Shadcn';
 
-Available templates:
-<template>
-  <name>blank</name>
-  <description>Empty starter for simple scripts and trivial tasks that don't require a full template setup</description>
-  <tags>basic, script</tags>
-</template>
-${templates
-  .map(
-    (template) => `
-<template>
-  <name>${template.name}</name>
-  <description>${template.description}</description>
-  ${template.tags ? `<tags>${template.tags.join(', ')}</tags>` : ''}
-</template>
-`,
-  )
-  .join('\n')}
+function titleFromMessage(message: string): string {
+  const words = message
+    .replace(/\[(Model|Provider): [^\]]*\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .slice(0, 8)
+    .join(' ');
 
-Response Format:
-<selection>
-  <templateName>{selected template name}</templateName>
-  <title>{a proper title for the project}</title>
-</selection>
+  return words || 'Next.js Project';
+}
 
-Examples:
-
-<example>
-User: I need to build a todo app
-Response:
-<selection>
-  <templateName>react-basic-starter</templateName>
-  <title>Simple React todo application</title>
-</selection>
-</example>
-
-<example>
-User: Write a script to generate numbers from 1 to 100
-Response:
-<selection>
-  <templateName>blank</templateName>
-  <title>script to generate numbers from 1 to 100</title>
-</selection>
-</example>
-
-Instructions:
-1. For trivial tasks and simple scripts, always recommend the blank template
-2. For more complex projects, recommend templates from the provided list
-3. Follow the exact XML format
-4. Consider both technical requirements and tags
-5. If no perfect match exists, recommend the closest option
-
-Important: Provide only the selection tags in your response, no additional text.
-MOST IMPORTANT: YOU DONT HAVE TIME TO THINK JUST START RESPONDING BASED ON HUNCH 
-`;
-
-const templates: Template[] = STARTER_TEMPLATES.filter((t) => !t.name.includes('shadcn'));
-
-const parseSelectedTemplate = (llmOutput: string): { template: string; title: string } | null => {
-  try {
-    // Extract content between <templateName> tags
-    const templateNameMatch = llmOutput.match(/<templateName>(.*?)<\/templateName>/);
-    const titleMatch = llmOutput.match(/<title>(.*?)<\/title>/);
-
-    if (!templateNameMatch) {
-      return null;
-    }
-
-    return { template: templateNameMatch[1].trim(), title: titleMatch?.[1].trim() || 'Untitled Project' };
-  } catch (error) {
-    console.error('Error parsing template selection:', error);
-    return null;
-  }
-};
-
-export const selectStarterTemplate = async (options: { message: string; model: string; provider: ProviderInfo }) => {
-  const { message, model, provider } = options;
-  const requestBody = {
-    message,
-    model,
-    provider,
-    system: starterTemplateSelectionPrompt(templates),
-  };
-  const response = await fetch('/api/llmcall', {
-    method: 'POST',
-    body: JSON.stringify(requestBody),
-  });
-  const respJson: { text: string } = await response.json();
-  console.log(respJson);
-
-  const { text } = respJson;
-  const selectedTemplate = parseSelectedTemplate(text);
-
-  if (selectedTemplate) {
-    return selectedTemplate;
-  } else {
-    console.log('No template selected, using blank template');
-
-    return {
-      template: 'blank',
-      title: '',
-    };
-  }
+export const selectStarterTemplate = async (options: { message: string; model?: string; provider?: ProviderInfo }) => {
+  return { template: NEXTJS_TEMPLATE_NAME, title: titleFromMessage(options.message) };
 };
 
 const getGitHubRepoContent = async (repoName: string): Promise<{ name: string; path: string; content: string }[]> => {
@@ -156,6 +70,10 @@ export async function getTemplates(templateName: string, title?: string) {
      *const comminLockFiles = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'];
      *filteredFiles = filteredFiles.filter((x) => comminLockFiles.includes(x.name) == false);
      */
+  }
+
+  if (template.name === NEXTJS_TEMPLATE_NAME) {
+    filteredFiles = modernizeNextTemplate(filteredFiles);
   }
 
   // exclude    .bolt
@@ -250,4 +168,41 @@ IMPORTANT: Dont Forget to install the dependencies before running the app by usi
     assistantMessage,
     userMessage,
   };
+}
+
+/*
+ * The upstream template pins Next.js 13.5.1 plus @next/swc-wasm-nodejs (only needed to compile
+ * inside the browser's WebContainer). Previews now run on Vercel Sandbox with native SWC, so
+ * bump to the latest Next 14 (still React 18, which the shadcn components target) and drop the
+ * lockfile, which would otherwise pin the old versions.
+ */
+const NEXT_VERSION = '14.2.35';
+
+function modernizeNextTemplate<T extends { name: string; path: string; content: string }>(files: T[]): T[] {
+  return files
+    .filter((file) => file.path !== 'package-lock.json')
+    .map((file) => {
+      if (file.path !== 'package.json') {
+        return file;
+      }
+
+      try {
+        const pkg = JSON.parse(file.content);
+        const deps = pkg.dependencies ?? {};
+
+        delete deps['@next/swc-wasm-nodejs'];
+
+        if (deps.next) {
+          deps.next = NEXT_VERSION;
+        }
+
+        if (deps['eslint-config-next']) {
+          deps['eslint-config-next'] = NEXT_VERSION;
+        }
+
+        return { ...file, content: JSON.stringify(pkg, null, 2) + '\n' };
+      } catch {
+        return file;
+      }
+    });
 }

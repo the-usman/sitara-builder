@@ -43,4 +43,7 @@ interface Env {
   VITE_NETLIFY_ACCESS_TOKEN: string;
   VERCEL_TOKEN: string;
   VITE_VERCEL_ACCESS_TOKEN: string;
+  VERCEL_TEAM_ID: string;
+  VERCEL_PROJECT_ID: string;
+  VERCEL_SANDBOX_REGION: string;
 }

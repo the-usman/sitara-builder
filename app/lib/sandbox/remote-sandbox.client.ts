@@ -1,0 +1,531 @@
+import { atom, type MapStore } from 'nanostores';
+import type { FileMap } from '~/lib/stores/files';
+import { createScopedLogger } from '~/utils/logger';
+
+/*
+ * Browser half of remote preview (server: app/lib/sandbox/vercel-sandbox.server.ts).
+ *
+ * When the server has Vercel Sandbox configured, shell and start actions run there instead of
+ * in the WebContainer, and every file in the workbench is mirrored to the sandbox. The
+ * WebContainer is still the file system behind the file tree and editor, but never runs
+ * npm install or a dev server. Set localStorage `sitara-preview-mode` to `browser` to opt out.
+ */
+
+const logger = createScopedLogger('RemoteSandbox');
+
+export type RemotePreviewState =
+  | { status: 'idle' }
+  | { status: 'syncing' | 'installing' | 'starting'; url?: string }
+  | { status: 'running'; url: string }
+  | { status: 'stopped'; url?: string }
+  | { status: 'error'; error: string; url?: string };
+
+export const remotePreview = atom<RemotePreviewState>({ status: 'idle' });
+
+let enabledPromise: Promise<boolean> | undefined;
+
+export function isRemoteSandboxEnabled(): Promise<boolean> {
+  if (typeof window === 'undefined') {
+    return Promise.resolve(false);
+  }
+
+  try {
+    if (window.localStorage.getItem('sitara-preview-mode') === 'browser') {
+      return Promise.resolve(false);
+    }
+  } catch {}
+
+  enabledPromise ??= fetch('/api/sandbox')
+    .then((res) => (res.ok ? (res.json() as Promise<{ enabled?: boolean }>) : { enabled: false }))
+    .then((data) => Boolean(data.enabled))
+    .catch(() => false);
+
+  return enabledPromise;
+}
+
+/*
+ * The sandbox key is bound on first use. A brand-new chat has no id yet when its first
+ * actions run, so a random key is used and kept when the id arrives — switching keys mid-chat
+ * would strand the files already synced to the first sandbox.
+ */
+let binding: { key: string; chat?: string; used: boolean } | undefined;
+
+async function sandboxKey(): Promise<string> {
+  // Lazy: useChatHistory imports the workbench store, which imports this module.
+  const { chatId } = await import('~/lib/persistence/useChatHistory');
+  const current = chatId.get();
+
+  if (binding && current && binding.chat && current !== binding.chat) {
+    releaseSandbox();
+  }
+
+  if (!binding) {
+    binding = { key: current ?? `tmp-${crypto.randomUUID()}`, chat: current, used: false };
+  } else if (current && !binding.chat) {
+    binding.chat = current;
+  }
+
+  binding.used = true;
+
+  return binding.key;
+}
+
+// ---------------------------------------------------------------- lifecycle (credit control)
+
+const PING_INTERVAL_MS = 2 * 60_000;
+
+/** No keep-alive after this long without input, so an abandoned tab lets the sandbox time out. */
+const ACTIVE_WINDOW_MS = 15 * 60_000;
+
+let lastActivityAt = Date.now();
+let lastStartCommand: string | undefined;
+
+/** Stops the bound chat's sandbox. sendBeacon survives the page unloading; fetch is the fallback. */
+function stopSandbox(key: string) {
+  const body = JSON.stringify({ op: 'stop', chatKey: key });
+
+  try {
+    if (navigator.sendBeacon?.('/api/sandbox', new Blob([body], { type: 'application/json' }))) {
+      return;
+    }
+  } catch {}
+
+  fetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    keepalive: true,
+  }).catch(() => undefined);
+}
+
+/** The chat is closing or changing: stop its sandbox and forget everything synced to it. */
+function releaseSandbox() {
+  if (binding?.used) {
+    stopSandbox(binding.key);
+  }
+
+  binding = undefined;
+  lastStartCommand = undefined;
+  reportedErrors.clear();
+  resetSyncState();
+}
+
+async function ping() {
+  const state = remotePreview.get();
+
+  if (!binding?.used || state.status === 'idle' || state.status === 'stopped') {
+    return;
+  }
+
+  if (Date.now() - lastActivityAt > ACTIVE_WINDOW_MS) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/sandbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'ping', chatKey: binding.key }),
+    });
+    const data = (await res.json()) as { running?: boolean };
+    const current = remotePreview.get();
+
+    // Busy states mean a command is mid-flight; only a finished preview can go stale.
+    if (!data.running && (current.status === 'running' || current.status === 'error')) {
+      remotePreview.set({ status: 'stopped', url: 'url' in current ? current.url : undefined });
+    }
+  } catch {}
+}
+
+function installLifecycleHandlers() {
+  const markActive = () => (lastActivityAt = Date.now());
+
+  for (const event of ['pointerdown', 'keydown', 'wheel']) {
+    window.addEventListener(event, markActive, { passive: true, capture: true });
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      markActive();
+      void ping();
+    }
+  });
+
+  // Tab closed, reloaded or navigated away.
+  window.addEventListener('pagehide', () => {
+    if (binding?.used) {
+      stopSandbox(binding.key);
+    }
+  });
+
+  setInterval(() => void ping(), PING_INTERVAL_MS);
+  setInterval(() => void pollPreviewErrors(), ERROR_POLL_MS);
+
+  // Switching chats inside the app (no page unload).
+  void import('~/lib/persistence/useChatHistory').then(({ chatId }) => {
+    let previous = chatId.get();
+
+    chatId.subscribe((next) => {
+      if (previous && next !== previous && binding?.chat === previous) {
+        releaseSandbox();
+      }
+
+      previous = next;
+    });
+  });
+}
+
+/** Brings a stopped preview back: the sandbox resumes from its snapshot and the dev server restarts. */
+export async function restartRemotePreview(terminal?: RemoteTerminal) {
+  if (!lastStartCommand) {
+    remotePreview.set({ status: 'error', error: 'Send a message to start the preview again.' });
+    return;
+  }
+
+  /*
+   * Stopped sandboxes are deleted, so this lands on a fresh one: streamCommand's file check
+   * re-sends the project, and dependencies must be installed again.
+   */
+  const hasInstall = /\b(npm|pnpm|yarn|bun)\s+(i|install|ci)\b/.test(lastStartCommand);
+  lastFilesChangeAt = 0;
+  await startRemoteDevServer(hasInstall ? lastStartCommand : `npm install && ${lastStartCommand}`, terminal);
+}
+
+// ---------------------------------------------------------------- file mirroring
+
+const SKIP_PATH = /\/(node_modules|\.history|\.git)\//;
+let filesStore: MapStore<FileMap> | undefined;
+let lastSent = new Map<string, string>();
+let syncChain: Promise<void> = Promise.resolve();
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
+let lastFilesChangeAt = 0;
+
+function resetSyncState() {
+  lastSent = new Map();
+  remotePreview.set({ status: 'idle' });
+}
+
+/** Called once by the workbench store; mirrors file changes to the sandbox, debounced. */
+export function startRemoteFileSync(files: MapStore<FileMap>) {
+  filesStore = files;
+  installLifecycleHandlers();
+  files.subscribe(() => {
+    lastFilesChangeAt = Date.now();
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => void flushRemoteFiles(), 400);
+  });
+}
+
+/** Sends every file changed since the last sync. Serialized, so callers can await it before running a command. */
+export function flushRemoteFiles(): Promise<void> {
+  syncChain = syncChain.then(syncOnce, syncOnce);
+  return syncChain;
+}
+
+async function syncOnce() {
+  if (!filesStore || !(await isRemoteSandboxEnabled())) {
+    return;
+  }
+
+  /*
+   * Resolve the key before diffing: if it rebinds (chat id changed), lastSent is reset, and a
+   * diff taken against the old sandbox's lastSent would send the new one only recent changes.
+   */
+  const chatKey = await sandboxKey();
+  const current = filesStore.get();
+  const files: Array<{ path: string; content: string; binary: boolean }> = [];
+  const seen = new Set<string>();
+
+  for (const [path, dirent] of Object.entries(current)) {
+    if (dirent?.type !== 'file' || SKIP_PATH.test(path)) {
+      continue;
+    }
+
+    seen.add(path);
+
+    if (lastSent.get(path) !== dirent.content) {
+      files.push({ path, content: dirent.content, binary: dirent.isBinary });
+    }
+  }
+
+  const deleted = [...lastSent.keys()].filter((path) => !seen.has(path));
+
+  if (!files.length && !deleted.length) {
+    return;
+  }
+
+  const res = await fetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'sync', chatKey, files, deleted }),
+  });
+
+  if (!res.ok) {
+    const message = ((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`;
+    logger.error('File sync failed:', message);
+    remotePreview.set({ status: 'error', error: `File sync failed: ${message}` });
+
+    return;
+  }
+
+  for (const file of files) {
+    lastSent.set(file.path, file.content);
+  }
+
+  for (const path of deleted) {
+    lastSent.delete(path);
+  }
+}
+
+async function sha1Hex(content: string, binary: boolean): Promise<string> {
+  const bytes = binary ? Uint8Array.from(atob(content), (c) => c.charCodeAt(0)) : new TextEncoder().encode(content);
+  const digest = await crypto.subtle.digest('SHA-1', bytes);
+
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/*
+ * Safety net run before every command: compares the sandbox's file hashes with the workbench
+ * and re-sends whatever is missing or different. Incremental sync relies on bookkeeping that a
+ * failed request, a rebind or a resumed snapshot can invalidate — a preview that silently
+ * lacks src/main.tsx renders as a blank page.
+ */
+async function verifyRemoteFiles(chatKey: string) {
+  if (!filesStore) {
+    return;
+  }
+
+  const res = await fetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'manifest', chatKey }),
+  });
+
+  if (!res.ok) {
+    return;
+  }
+
+  const { files: remote = {} } = (await res.json()) as { files?: Record<string, string> };
+  const missing: Array<{ path: string; content: string; binary: boolean }> = [];
+
+  for (const [path, dirent] of Object.entries(filesStore.get())) {
+    if (dirent?.type !== 'file' || SKIP_PATH.test(path)) {
+      continue;
+    }
+
+    if (remote[path] !== (await sha1Hex(dirent.content, dirent.isBinary))) {
+      missing.push({ path, content: dirent.content, binary: dirent.isBinary });
+    }
+  }
+
+  if (!missing.length) {
+    return;
+  }
+
+  logger.warn(`Re-sending ${missing.length} file(s) missing or stale in the sandbox`);
+
+  const sync = await fetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'sync', chatKey, files: missing, deleted: [] }),
+  });
+
+  if (sync.ok) {
+    for (const file of missing) {
+      lastSent.set(file.path, file.content);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- preview errors
+
+const ERROR_POLL_MS = 6000;
+const reportedErrors = new Set<string>();
+
+/*
+ * The preview runs in its own tab on another origin, so its errors can't reach the builder
+ * directly: the sandbox collects them (dev-server output + an injected page reporter) and the
+ * builder polls, showing them in the same alert the in-browser preview used.
+ */
+async function pollPreviewErrors() {
+  const state = remotePreview.get();
+
+  if (!binding?.used || state.status !== 'running' || Date.now() - lastActivityAt > ACTIVE_WINDOW_MS) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/sandbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'errors', chatKey: binding.key }),
+    });
+
+    if (!res.ok) {
+      return;
+    }
+
+    const { errors = [] } = (await res.json()) as {
+      errors?: Array<{ kind: 'build' | 'runtime'; message: string; detail: string }>;
+    };
+    const fresh = errors.filter((error) => !reportedErrors.has(error.message));
+
+    if (!fresh.length) {
+      return;
+    }
+
+    fresh.forEach((error) => reportedErrors.add(error.message));
+
+    const first = fresh[0];
+    const { workbenchStore } = await import('~/lib/stores/workbench');
+
+    workbenchStore.actionAlert.set({
+      type: 'preview',
+      title: first.kind === 'build' ? 'Preview Build Error' : 'Preview Error',
+      description: first.message,
+      content: fresh.map((error) => error.detail).join('\n\n---\n\n'),
+      source: 'preview',
+    });
+  } catch {
+    // transient; next poll retries
+  }
+}
+
+// ---------------------------------------------------------------- commands
+
+export interface RemoteTerminal {
+  write(data: string): void;
+}
+
+/** xterm needs CRLF; sandbox output is plain LF. */
+function toTerminal(text: string) {
+  return text.replace(/\r?\n/g, '\r\n');
+}
+
+/*
+ * File actions land in the WebContainer first and reach the files store through a buffered
+ * watcher, so a command queued right behind them (npm install after package.json) waits for
+ * the store to go quiet before the last sync.
+ */
+async function waitForFilesToSettle() {
+  const startedAt = Date.now();
+
+  do {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  } while (Date.now() - Math.max(lastFilesChangeAt, startedAt) < 350 && Date.now() - startedAt < 5000);
+}
+
+async function streamCommand(
+  op: 'run' | 'start',
+  command: string,
+  terminal: RemoteTerminal | undefined,
+): Promise<{ exitCode: number; output: string; url?: string }> {
+  await waitForFilesToSettle();
+  await flushRemoteFiles();
+
+  const chatKey = await sandboxKey();
+  await verifyRemoteFiles(chatKey).catch((error) => logger.error('File check failed:', error));
+
+  terminal?.write(toTerminal(`\n\x1b[36m[vercel sandbox]\x1b[0m $ ${command}\n`));
+
+  const res = await fetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, chatKey, command }),
+  });
+
+  if (!res.ok || !res.body) {
+    const message = ((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`;
+    terminal?.write(toTerminal(`\x1b[31m${message}\x1b[0m\n`));
+
+    return { exitCode: 1, output: message };
+  }
+
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  let output = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += value;
+
+    let newline: number;
+
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+
+      if (!line) {
+        continue;
+      }
+
+      const event = JSON.parse(line) as
+        | { t: 'log'; d: string }
+        | { t: 'exit'; code: number }
+        | { t: 'url'; url: string }
+        | { t: 'error'; message: string };
+
+      if (event.t === 'log') {
+        output += event.d;
+        terminal?.write(toTerminal(event.d));
+      } else if (event.t === 'exit') {
+        return { exitCode: event.code, output };
+      } else if (event.t === 'url') {
+        return { exitCode: 0, output, url: event.url };
+      } else {
+        terminal?.write(toTerminal(`\x1b[31m${event.message}\x1b[0m\n`));
+        return { exitCode: 1, output: output + event.message };
+      }
+    }
+  }
+
+  return { exitCode: 1, output: output || 'Connection to the sandbox closed unexpectedly.' };
+}
+
+export async function runRemoteShell(command: string, terminal?: RemoteTerminal) {
+  const isInstall = /\b(npm|pnpm|yarn|bun)\s+(i|install|add|ci)\b/.test(command);
+  const previous = remotePreview.get();
+
+  if (isInstall || previous.status === 'idle') {
+    remotePreview.set({
+      status: isInstall ? 'installing' : 'syncing',
+      url: 'url' in previous ? previous.url : undefined,
+    });
+  }
+
+  const result = await streamCommand('run', command, terminal);
+
+  if (result.exitCode !== 0) {
+    remotePreview.set({
+      status: 'error',
+      error: `\`${command}\` failed`,
+      url: 'url' in previous ? previous.url : undefined,
+    });
+  } else if (previous.status === 'running') {
+    remotePreview.set(previous);
+  }
+
+  return result;
+}
+
+export async function startRemoteDevServer(command: string, terminal?: RemoteTerminal) {
+  lastStartCommand = command;
+  reportedErrors.clear();
+  remotePreview.set({ status: 'starting' });
+
+  const result = await streamCommand('start', command, terminal);
+
+  if (result.url) {
+    terminal?.write(toTerminal(`\n\x1b[32mPreview ready:\x1b[0m ${result.url}\n`));
+    remotePreview.set({ status: 'running', url: result.url });
+  } else {
+    remotePreview.set({ status: 'error', error: 'The dev server did not start. See the terminal for details.' });
+  }
+
+  return result;
+}
