@@ -6,7 +6,7 @@ import { PortDropdown } from './PortDropdown';
 import { ScreenshotSelector } from './ScreenshotSelector';
 import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
 import { ExpoQrModal } from '~/components/workbench/ExpoQrModal';
-import { remotePreview } from '~/lib/sandbox/remote-sandbox.client';
+import { remotePreview, remoteSandboxAvailable } from '~/lib/sandbox/remote-sandbox.client';
 import { RemotePreviewPanel } from './RemotePreviewPanel';
 
 type ResizeSide = 'left' | 'right' | null;
@@ -51,8 +51,10 @@ const WINDOW_SIZES: WindowSize[] = [
 
 export const Preview = memo(() => {
   const remoteStatus = useStore(remotePreview).status;
+  const remoteAvailable = useStore(remoteSandboxAvailable);
 
-  return remoteStatus === 'idle' ? <BrowserPreview /> : <RemotePreviewPanel />;
+  // With Vercel Sandbox configured the remote panel is always shown, so "Run preview" is reachable.
+  return remoteAvailable || remoteStatus !== 'idle' ? <RemotePreviewPanel /> : <BrowserPreview />;
 });
 
 const BrowserPreview = memo(() => {

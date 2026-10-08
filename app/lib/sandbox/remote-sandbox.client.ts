@@ -22,6 +22,9 @@ export type RemotePreviewState =
 
 export const remotePreview = atom<RemotePreviewState>({ status: 'idle' });
 
+/** True once the server confirms Vercel Sandbox is configured — the Preview tab then shows the remote panel. */
+export const remoteSandboxAvailable = atom(false);
+
 let enabledPromise: Promise<boolean> | undefined;
 
 export function isRemoteSandboxEnabled(): Promise<boolean> {
@@ -38,7 +41,11 @@ export function isRemoteSandboxEnabled(): Promise<boolean> {
   enabledPromise ??= fetch('/api/sandbox')
     .then((res) => (res.ok ? (res.json() as Promise<{ enabled?: boolean }>) : { enabled: false }))
     .then((data) => Boolean(data.enabled))
-    .catch(() => false);
+    .catch(() => false)
+    .then((enabled) => {
+      remoteSandboxAvailable.set(enabled);
+      return enabled;
+    });
 
   return enabledPromise;
 }
@@ -175,21 +182,54 @@ function installLifecycleHandlers() {
   });
 }
 
-/** Brings a stopped preview back: the sandbox resumes from its snapshot and the dev server restarts. */
-export async function restartRemotePreview(terminal?: RemoteTerminal) {
-  if (!lastStartCommand) {
-    remotePreview.set({ status: 'error', error: 'Send a message to start the preview again.' });
+const BUSY_STATUSES = new Set(['syncing', 'installing', 'starting']);
+
+/** `npm run dev|start|preview` from the project's root package.json, like a restored chat would run. */
+function detectStartCommand(): string | undefined {
+  const pkgFile = filesStore?.get()['/home/project/package.json'];
+
+  if (pkgFile?.type !== 'file') {
+    return undefined;
+  }
+
+  try {
+    const scripts = (JSON.parse(pkgFile.content) as { scripts?: Record<string, string> }).scripts ?? {};
+    const script = ['dev', 'start', 'preview'].find((name) => scripts[name]);
+
+    return script ? `npm run ${script}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * "Run preview" / "Restart preview": (re)starts the dev server on demand. Uses the last start
+ * command from the chat, or the project's package.json scripts when nothing has run yet.
+ * Stopped sandboxes are deleted, so this may land on a fresh one: streamCommand's file check
+ * re-sends the project, and dependencies are installed first.
+ */
+export async function runRemotePreview(terminal?: RemoteTerminal) {
+  if (BUSY_STATUSES.has(remotePreview.get().status)) {
     return;
   }
 
-  /*
-   * Stopped sandboxes are deleted, so this lands on a fresh one: streamCommand's file check
-   * re-sends the project, and dependencies must be installed again.
-   */
-  const hasInstall = /\b(npm|pnpm|yarn|bun)\s+(i|install|ci)\b/.test(lastStartCommand);
+  const command = lastStartCommand ?? detectStartCommand();
+
+  if (!command) {
+    remotePreview.set({
+      status: 'error',
+      error: 'No package.json with a "dev", "start" or "preview" script yet. Ask the AI to create the project first.',
+    });
+
+    return;
+  }
+
+  const hasInstall = /\b(npm|pnpm|yarn|bun)\s+(i|install|ci)\b/.test(command);
   lastFilesChangeAt = 0;
-  await startRemoteDevServer(hasInstall ? lastStartCommand : `npm install && ${lastStartCommand}`, terminal);
+  await startRemoteDevServer(hasInstall ? command : `npm install && ${command}`, terminal);
 }
+
+export const restartRemotePreview = runRemotePreview;
 
 // ---------------------------------------------------------------- file mirroring
 
@@ -209,6 +249,7 @@ function resetSyncState() {
 export function startRemoteFileSync(files: MapStore<FileMap>) {
   filesStore = files;
   installLifecycleHandlers();
+  void isRemoteSandboxEnabled();
   files.subscribe(() => {
     lastFilesChangeAt = Date.now();
     clearTimeout(syncTimer);

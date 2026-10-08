@@ -1,6 +1,6 @@
 import type { Change } from 'diff';
 
-export type ActionType = 'file' | 'shell' | 'supabase';
+export type ActionType = 'file' | 'edit' | 'shell' | 'supabase';
 
 export interface BaseAction {
   content: string;
@@ -8,6 +8,15 @@ export interface BaseAction {
 
 export interface FileAction extends BaseAction {
   type: 'file';
+  filePath: string;
+}
+
+/**
+ * Partial change to an existing file: `content` holds one or more SEARCH/REPLACE blocks
+ * (see app/utils/search-replace.ts), so a small change doesn't rewrite the whole file.
+ */
+export interface EditAction extends BaseAction {
+  type: 'edit';
   filePath: string;
 }
 
@@ -30,7 +39,7 @@ export interface SupabaseAction extends BaseAction {
   projectId?: string;
 }
 
-export type BoltAction = FileAction | ShellAction | StartAction | BuildAction | SupabaseAction;
+export type BoltAction = FileAction | EditAction | ShellAction | StartAction | BuildAction | SupabaseAction;
 
 export type BoltActionData = BoltAction | BaseAction;
 

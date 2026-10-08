@@ -1,10 +1,11 @@
 import { memo, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'react-toastify';
-import { remotePreview, restartRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
+import { remotePreview, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
 import { workbenchStore } from '~/lib/stores/workbench';
 
 const STATUS_TEXT: Record<string, string> = {
+  idle: 'The preview is not running.',
   syncing: 'Uploading project files to the sandbox…',
   installing: 'Installing dependencies on Vercel…',
   starting: 'Starting the dev server on Vercel…',
@@ -12,6 +13,15 @@ const STATUS_TEXT: Record<string, string> = {
   stopped: 'Preview stopped to save credits.',
   error: 'Something went wrong.',
 };
+
+const PRIMARY_BUTTON =
+  'px-4 py-2 rounded-md bg-accent-500 text-white hover:bg-accent-600 disabled:opacity-50 disabled:cursor-not-allowed';
+const SECONDARY_BUTTON =
+  'px-4 py-2 rounded-md border border-bolt-elements-borderColor text-bolt-elements-textPrimary hover:bg-bolt-elements-background-depth-2 disabled:opacity-50 disabled:cursor-not-allowed';
+
+function runPreview() {
+  void runRemotePreview(workbenchStore.boltTerminal.terminal);
+}
 
 /*
  * Remote previews are cross-origin and the builder page is cross-origin isolated (WebContainer
@@ -31,6 +41,7 @@ export const RemotePreviewPanel = memo(() => {
   }, [state]);
 
   const busy = state.status === 'syncing' || state.status === 'installing' || state.status === 'starting';
+  const running = state.status === 'running';
 
   return (
     <div className="w-full h-full flex items-center justify-center bg-bolt-elements-background-depth-1 p-6">
@@ -49,38 +60,42 @@ export const RemotePreviewPanel = memo(() => {
           <div className="text-sm text-bolt-elements-textSecondary break-words">{state.error}</div>
         )}
 
-        {(state.status === 'stopped' || state.status === 'error') && (
-          <button
-            type="button"
-            className="px-4 py-2 rounded-md border border-bolt-elements-borderColor text-bolt-elements-textPrimary hover:bg-bolt-elements-background-depth-2"
-            onClick={() => void restartRemotePreview(workbenchStore.boltTerminal.terminal)}
-          >
-            Restart preview
-          </button>
-        )}
-
-        {url && state.status !== 'stopped' && (
-          <>
-            <button
-              type="button"
-              className="px-4 py-2 rounded-md bg-accent-500 text-white hover:bg-accent-600 disabled:opacity-50"
-              disabled={state.status !== 'running'}
-              onClick={() => window.open(url, '_blank', 'noopener')}
-            >
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {running && url && (
+            <button type="button" className={PRIMARY_BUTTON} onClick={() => window.open(url, '_blank', 'noopener')}>
               Open preview
             </button>
-            <div className="flex items-center gap-2 text-xs text-bolt-elements-textSecondary max-w-full">
-              <span className="truncate">{url}</span>
-              <button
-                type="button"
-                className="i-ph:copy shrink-0 hover:text-bolt-elements-textPrimary"
-                title="Copy link"
-                onClick={() => {
-                  navigator.clipboard.writeText(url).then(() => toast.success('Preview link copied'));
-                }}
-              />
-            </div>
-          </>
+          )}
+
+          {state.status === 'idle' ? (
+            <button type="button" className={PRIMARY_BUTTON} onClick={runPreview}>
+              Run preview
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={running ? SECONDARY_BUTTON : PRIMARY_BUTTON}
+              disabled={busy}
+              onClick={runPreview}
+              title="Reinstall dependencies and restart the dev server"
+            >
+              Restart preview
+            </button>
+          )}
+        </div>
+
+        {running && url && (
+          <div className="flex items-center gap-2 text-xs text-bolt-elements-textSecondary max-w-full">
+            <span className="truncate">{url}</span>
+            <button
+              type="button"
+              className="i-ph:copy shrink-0 hover:text-bolt-elements-textPrimary"
+              title="Copy link"
+              onClick={() => {
+                navigator.clipboard.writeText(url).then(() => toast.success('Preview link copied'));
+              }}
+            />
+          </div>
         )}
 
         <div className="text-xs text-bolt-elements-textTertiary">

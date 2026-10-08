@@ -592,6 +592,21 @@ export class WorkbenchStore {
         await artifact.runner.runAction(data);
         this.resetAllFileModifications();
       }
+    } else if (data.action.type === 'edit') {
+      // Partial edit: the runner patches the file on disk and the editor picks it up from the files store.
+      const wc = await webcontainer;
+      const fullPath = path.join(wc.workdir, data.action.filePath);
+
+      if (this.selectedFile.value !== fullPath) {
+        this.setSelectedFile(fullPath);
+      }
+
+      if (this.currentView.value !== 'code') {
+        this.currentView.set('code');
+      }
+
+      await artifact.runner.runAction(data);
+      this.resetAllFileModifications();
     } else {
       await artifact.runner.runAction(data);
     }

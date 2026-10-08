@@ -4,6 +4,7 @@ import { getSystemPrompt } from '~/lib/common/prompts/prompts';
 import { DEFAULT_MODEL, DEFAULT_PROVIDER, MODIFICATIONS_TAG_NAME, PROVIDER_LIST, WORK_DIR } from '~/utils/constants';
 import type { IProviderSetting } from '~/types/model';
 import { PromptLibrary } from '~/lib/common/prompt-library';
+import { EDIT_ACTION_INSTRUCTIONS } from '~/lib/common/prompts/edit-action';
 import { allowedHTMLElements } from '~/utils/markdown';
 import { LLMManager } from '~/lib/modules/llm/manager';
 import { createScopedLogger } from '~/utils/logger';
@@ -212,6 +213,9 @@ export async function streamText(props: {
         credentials: options?.supabaseConnection?.credentials || undefined,
       },
     }) ?? getSystemPrompt();
+
+  systemPrompt = `${systemPrompt}
+${EDIT_ACTION_INSTRUCTIONS}`;
 
   if (contextFiles && contextOptimization) {
     const codeContext = createFilesContext(contextFiles, true);

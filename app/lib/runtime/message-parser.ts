@@ -110,6 +110,11 @@ export class StreamingMessageParser {
 
             let content = currentAction.content.trim();
 
+            if ('type' in currentAction && currentAction.type === 'edit') {
+              // SEARCH/REPLACE text must stay byte-exact, so only undo tag escaping.
+              content = cleanEscapedTags(currentAction.content);
+            }
+
             if ('type' in currentAction && currentAction.type === 'file') {
               // Remove markdown code block syntax if present and file is not markdown
               if (!currentAction.filePath.endsWith('.md')) {
@@ -313,7 +318,7 @@ export class StreamingMessageParser {
 
         (actionAttributes as SupabaseAction).filePath = filePath;
       }
-    } else if (actionType === 'file') {
+    } else if (actionType === 'file' || actionType === 'edit') {
       const filePath = this.#extractAttribute(actionTag, 'filePath') as string;
 
       if (!filePath) {

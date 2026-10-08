@@ -4,6 +4,7 @@ import { atom, map, type MapStore } from 'nanostores';
 import type { ActionAlert, BoltAction, DeployAlert, FileHistory, SupabaseAction, SupabaseAlert } from '~/types/actions';
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
+import { applySearchReplace, parseSearchReplaceBlocks, SearchReplaceError } from '~/utils/search-replace';
 import type { ActionCallbackData } from './message-parser';
 import type { BoltShell } from '~/utils/shell';
 import { isRemoteSandboxEnabled, runRemoteShell, startRemoteDevServer } from '~/lib/sandbox/remote-sandbox.client';
@@ -164,6 +165,10 @@ export class ActionRunner {
           await this.#runFileAction(action);
           break;
         }
+        case 'edit': {
+          await this.#runEditAction(action);
+          break;
+        }
         case 'supabase': {
           try {
             await this.handleSupabaseAction(action as SupabaseAction);
@@ -238,7 +243,7 @@ export class ActionRunner {
 
       this.onAlert?.({
         type: 'error',
-        title: 'Dev Server Failed',
+        title: action.type === 'edit' ? 'File Edit Failed' : 'Dev Server Failed',
         description: error.header,
         content: error.output,
       });
@@ -319,6 +324,57 @@ export class ActionRunner {
     }
 
     return resp;
+  }
+
+  /** Applies SEARCH/REPLACE blocks to an existing file (see app/utils/search-replace.ts). */
+  async #runEditAction(action: ActionState) {
+    if (action.type !== 'edit') {
+      unreachable('Expected edit action');
+    }
+
+    const webcontainer = await this.#webcontainer;
+    const relativePath = nodePath.relative(webcontainer.workdir, action.filePath);
+    const blocks = parseSearchReplaceBlocks(action.content);
+
+    if (!blocks.length) {
+      throw new ActionCommandError(
+        `Could not edit ${relativePath}`,
+        'The edit contained no SEARCH/REPLACE blocks. Rewrite the whole file with a file action instead.',
+      );
+    }
+
+    let current: string;
+
+    try {
+      current = await webcontainer.fs.readFile(relativePath, 'utf-8');
+    } catch {
+      throw new ActionCommandError(
+        `Could not edit ${relativePath}`,
+        'The file does not exist. Create it with a full file action instead of an edit.',
+      );
+    }
+
+    let updated: string;
+
+    try {
+      updated = applySearchReplace(current, blocks);
+    } catch (error) {
+      if (!(error instanceof SearchReplaceError)) {
+        throw error;
+      }
+
+      throw new ActionCommandError(
+        `Could not edit ${relativePath}`,
+        `${error.message} Re-read the file and retry, or rewrite the whole file with a file action.
+
+SEARCH text that did not match:
+${error.failedSearch}`,
+      );
+    }
+
+    if (updated !== current) {
+      await this.#runFileAction({ ...action, type: 'file', content: updated } as ActionState);
+    }
   }
 
   async #runFileAction(action: ActionState) {
