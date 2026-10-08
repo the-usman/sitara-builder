@@ -18,12 +18,13 @@ services:
       target: bolt-ai-production
     restart: unless-stopped
 
-    # `dockerstart` runs `wrangler pages dev`, which is a single Node.js process - it does
-    # not use multiple cores on its own. Running 2 replicas is what actually puts a 4-core
+    # The image runs `node server.mjs` (one pooled MongoDB connection per container), a single
+    # Node.js process - it does not use multiple cores on its own. Running replicas is what actually puts a multi-core
     # box's other cores to work; Traefik round-robins across every container matching the
     # labels below automatically, no config needed on its side. Assumes nothing else heavy
     # shares this host - if MongoDB or another app also runs here, lower these numbers so
-    # you don't starve them (2 x 1.5 cpus / 4g = 3 cpus / 8g total, leaving 1 cpu / 4g free).
+    # you don't starve them. Low CPU with slow responses means requests are waiting on I/O
+    # (MongoDB connects, LLM APIs), not CPU — more replicas won't fix that.
     deploy:
       replicas: 3
       resources:
@@ -73,6 +74,20 @@ services:
       OLLAMA_API_BASE_URL: ${OLLAMA_API_BASE_URL:-}
       LMSTUDIO_API_BASE_URL: ${LMSTUDIO_API_BASE_URL:-}
       AWS_BEDROCK_CONFIG: ${AWS_BEDROCK_CONFIG:-}
+      TOKENGO_REASONING_EFFORT: ${TOKENGO_REASONING_EFFORT:-}
+
+      # --- Shared integration credentials ----------------------------------------
+      # Dokploy's Environment tab only feeds ${...} interpolation in this file — a variable
+      # not listed here never reaches the container, and the app reports "No github
+      # credentials are configured". Settings → Connections overrides all of these.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_ACCESS_TOKEN: ${GITHUB_ACCESS_TOKEN:-}
+      SUPABASE_ACCESS_TOKEN: ${SUPABASE_ACCESS_TOKEN:-}
+      VERCEL_TOKEN: ${VERCEL_TOKEN:-}
+      NETLIFY_TOKEN: ${NETLIFY_TOKEN:-}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
 
       # --- Misc -----------------------------------------------------------------
       VITE_LOG_LEVEL: ${VITE_LOG_LEVEL:-info}

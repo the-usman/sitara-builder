@@ -75,7 +75,9 @@ RUN sed -i 's/\r$//' bindings.sh && chmod +x bindings.sh
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD node -e "fetch('http://127.0.0.1:5173/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD [ "pnpm", "run", "dockerstart"]
+# Plain Node (server.mjs), not `wrangler pages dev`: one pooled MongoDB client instead of a
+# fresh connection per query. `pnpm run dockerstart:wrangler` is the old behaviour.
+CMD [ "node", "server.mjs" ]
 
 # Development image
 FROM base AS bolt-ai-development

@@ -43,18 +43,55 @@ export function getMongoUri(env?: ServerEnv): string {
   return requireServerSecret('MONGODB_URI', env);
 }
 
+/*
+ * Workers forbid reusing a socket opened by another request, so on Cloudflare every call must
+ * connect and close. On Node (the Docker/Dokploy server) one pooled client is shared by all
+ * requests — reconnecting cost a DNS lookup, TLS handshake and auth round-trip per query.
+ */
+const isWorkersRuntime = typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers';
+const sharedClients = new Map<string, Promise<MongoClient>>();
+
+function getSharedClient(uri: string): Promise<MongoClient> {
+  let clientPromise = sharedClients.get(uri);
+
+  if (!clientPromise) {
+    clientPromise = new MongoClient(uri, { maxPoolSize: 20, maxIdleTimeMS: 60_000 }).connect();
+
+    // A failed connect must not be cached forever — the next call retries.
+    clientPromise.catch(() => sharedClients.delete(uri));
+    sharedClients.set(uri, clientPromise);
+  }
+
+  return clientPromise;
+}
+
 /**
- * Opens a MongoDB connection, runs `fn`, and always closes the client.
- * Every Mongo access in the app should go through here so connection setup
- * and teardown stay in one place.
+ * Returns a connected client plus a `close` that releases it: a no-op for the shared Node
+ * client, a real close on Workers. Callers always call `close` and never `client.close()`.
+ */
+export async function openMongo(env: ServerEnv): Promise<{ client: MongoClient; close: () => Promise<void> }> {
+  const uri = getMongoUri(env);
+
+  if (!isWorkersRuntime) {
+    return { client: await getSharedClient(uri), close: async () => {} };
+  }
+
+  const client = new MongoClient(uri);
+  await client.connect();
+
+  return { client, close: () => client.close() };
+}
+
+/**
+ * Runs `fn` against the app database. Every Mongo access in the app should go through
+ * here (or `openMongo`) so connection setup and teardown stay in one place.
  */
 export async function withMongo<T>(env: ServerEnv, fn: (db: Db) => Promise<T>): Promise<T> {
-  const client = new MongoClient(getMongoUri(env));
+  const { client, close } = await openMongo(env);
 
   try {
-    await client.connect();
     return await fn(client.db(DB_NAME));
   } finally {
-    await client.close();
+    await close();
   }
 }

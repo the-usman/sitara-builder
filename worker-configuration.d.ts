@@ -35,6 +35,9 @@ interface Env {
   CLOUDINARY_API_SECRET: string;
 
   // Shared deploy credentials — see ENV_FALLBACKS in provider-tokens.server.ts for the precedence order.
+  GITHUB_TOKEN: string;
+  GITHUB_ACCESS_TOKEN: string;
+  SUPABASE_ACCESS_TOKEN: string;
   NETLIFY_TOKEN: string;
   NETLIFY_AUTH_TOKEN: string;
   VITE_NETLIFY_ACCESS_TOKEN: string;

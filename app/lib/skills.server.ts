@@ -1,7 +1,7 @@
-import { MongoClient, type Collection } from 'mongodb';
+import type { Collection } from 'mongodb';
 import JSZip from 'jszip';
 import type { PromptSkill } from '~/lib/common/prompts/skills';
-import { DB_NAME, getMongoUri, type ServerEnv } from '~/lib/mongo.server';
+import { DB_NAME, openMongo, type ServerEnv } from '~/lib/mongo.server';
 
 const COLLECTION = 'custom_skills';
 
@@ -27,11 +27,10 @@ export interface CustomSkillDoc {
 
 async function getCollection(
   env?: ServerEnv,
-): Promise<{ collection: Collection<CustomSkillDoc>; client: MongoClient }> {
-  const client = new MongoClient(getMongoUri(env));
-  await client.connect();
+): Promise<{ collection: Collection<CustomSkillDoc>; client: { close: () => Promise<void> } }> {
+  const { client, close } = await openMongo(env);
 
-  return { collection: client.db(DB_NAME).collection<CustomSkillDoc>(COLLECTION), client };
+  return { collection: client.db(DB_NAME).collection<CustomSkillDoc>(COLLECTION), client: { close } };
 }
 
 /*
@@ -316,10 +315,9 @@ export async function getDisabledBuiltinSkillNames(env?: ServerEnv): Promise<str
     return disabledBuiltinsCache.names;
   }
 
-  const client = new MongoClient(getMongoUri(env));
+  const { client, close } = await openMongo(env);
 
   try {
-    await client.connect();
 
     const doc = await client
       .db(DB_NAME)
@@ -330,15 +328,14 @@ export async function getDisabledBuiltinSkillNames(env?: ServerEnv): Promise<str
 
     return names;
   } finally {
-    await client.close();
+    await close();
   }
 }
 
 export async function setBuiltinSkillEnabled(name: string, enabled: boolean, env?: ServerEnv): Promise<void> {
-  const client = new MongoClient(getMongoUri(env));
+  const { client, close } = await openMongo(env);
 
   try {
-    await client.connect();
     await client
       .db(DB_NAME)
       .collection(SETTINGS_COLLECTION)
@@ -349,7 +346,7 @@ export async function setBuiltinSkillEnabled(name: string, enabled: boolean, env
       );
     invalidateSkillsCache();
   } finally {
-    await client.close();
+    await close();
   }
 }
 
