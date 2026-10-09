@@ -26,6 +26,12 @@ export const remotePreview = atom<RemotePreviewState>({ status: 'idle' });
 /** Whether the server has Vercel Sandbox configured; `undefined` until the check returns. */
 export const remoteSandboxAvailable = atom<boolean | undefined>(undefined);
 
+/*
+ * Bumped after a dependency install while the preview is live: the dev server may have compiled
+ * the page mid-install ("Module not found") and keeps showing that until the page reloads.
+ */
+export const previewReloadSignal = atom(0);
+
 let enabledPromise: Promise<boolean> | undefined;
 
 export function isRemoteSandboxEnabled(): Promise<boolean> {
@@ -584,6 +590,10 @@ export async function runRemoteShell(command: string, terminal?: RemoteTerminal,
     });
   } else {
     remotePreview.set(previous);
+
+    if (isInstall && previous.status === 'running') {
+      previewReloadSignal.set(previewReloadSignal.get() + 1);
+    }
   }
 
   return result;

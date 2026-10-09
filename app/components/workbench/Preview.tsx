@@ -6,7 +6,7 @@ import { PortDropdown } from './PortDropdown';
 import { ScreenshotSelector } from './ScreenshotSelector';
 import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
 import { ExpoQrModal } from '~/components/workbench/ExpoQrModal';
-import { remotePreview, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
+import { previewReloadSignal, remotePreview, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
 import { RemotePreviewPanel } from './RemotePreviewPanel';
 
 type ResizeSide = 'left' | 'right' | null;
@@ -133,6 +133,15 @@ const BrowserPreview = memo(() => {
       iframeRef.current.src = iframeRef.current.src;
     }
   };
+
+  // Reload after the AI installs packages, so a "Module not found" compiled mid-install clears.
+  const reloadSignal = useStore(previewReloadSignal);
+
+  useEffect(() => {
+    if (reloadSignal > 0) {
+      reloadPreview();
+    }
+  }, [reloadSignal]);
 
   const toggleFullscreen = async () => {
     if (!isFullscreen && containerRef.current) {

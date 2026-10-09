@@ -214,13 +214,54 @@ export async function* runShell(sandbox: Sandbox, command: string): AsyncGenerat
 
   const cmd = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', command], cwd: PROJECT_DIR, detached: true });
 
-  for await (const log of cmd.logs()) {
-    yield log.data;
+  /*
+   * Exit is decided by wait(), not by the log stream closing: a background child (npm's update
+   * check, a spawned server) can inherit stdout and keep the stream open long after the command
+   * itself exited, which left the builder stuck on "npm install" forever.
+   */
+  let exitCode: number | undefined;
+  const exited = cmd.wait().then((finished) => {
+    exitCode = finished.exitCode ?? 1;
+  });
+
+  const logs = cmd.logs()[Symbol.asyncIterator]();
+  let pendingLog = logs.next();
+
+  while (true) {
+    const next = await Promise.race([pendingLog, exited.then(() => 'exited' as const)]);
+
+    if (next === 'exited') {
+      // Give output already in flight a moment to arrive, then stop waiting for the stream.
+      const drainUntil = Date.now() + 500;
+
+      while (Date.now() < drainUntil) {
+        const late = await Promise.race([
+          pendingLog,
+          new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 100)),
+        ]);
+
+        if (late === 'timeout' || late.done) {
+          break;
+        }
+
+        yield late.value.data;
+        pendingLog = logs.next();
+      }
+
+      pendingLog.catch(() => undefined); // the abandoned read may still reject when the stream closes
+      void logs.return?.(undefined).catch(() => undefined);
+
+      return exitCode ?? 1;
+    }
+
+    if (next.done) {
+      await exited;
+      return exitCode ?? 1;
+    }
+
+    yield next.value.data;
+    pendingLog = logs.next();
   }
-
-  const finished = await cmd.wait();
-
-  return finished.exitCode ?? 1;
 }
 
 async function readPackageJson(sandbox: Sandbox): Promise<{ scripts?: Record<string, string> } | undefined> {
