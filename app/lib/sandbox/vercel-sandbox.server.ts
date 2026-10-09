@@ -208,60 +208,57 @@ export async function getManifest(sandbox: Sandbox): Promise<Record<string, stri
   return manifest;
 }
 
+const EXIT_MARKER = '__SITARA_EXIT_';
+const EXIT_MARKER_RE = /\n?__SITARA_EXIT_(\d+)__\n?/;
+
 /** Streams a shell command's output; the generator's return value is the exit code. */
 export async function* runShell(sandbox: Sandbox, command: string): AsyncGenerator<string, number> {
   await ensureProjectDir(sandbox);
 
-  const cmd = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', command], cwd: PROJECT_DIR, detached: true });
-
   /*
-   * Exit is decided by wait(), not by the log stream closing: a background child (npm's update
-   * check, a spawned server) can inherit stdout and keep the stream open long after the command
-   * itself exited, which left the builder stuck on "npm install" forever.
+   * Exit is signalled by a marker the wrapper prints, not by the command's output stream
+   * closing: a background child (npm's update check, a spawned server) inherits stdout and can
+   * hold it — and Vercel's own wait() — open long after the command exited, which left the
+   * builder stuck on "npm install". The subshell keeps `exit N` in the command from skipping
+   * the marker.
    */
-  let exitCode: number | undefined;
-  const exited = cmd.wait().then((finished) => {
-    exitCode = finished.exitCode ?? 1;
-  });
+  const script = `(\n${command}\n)\nprintf '\\n${EXIT_MARKER}%s__\\n' "$?"`;
+  const cmd = await sandbox.runCommand({ cmd: 'bash', args: ['-lc', script], cwd: PROJECT_DIR, detached: true });
 
-  const logs = cmd.logs()[Symbol.asyncIterator]();
-  let pendingLog = logs.next();
+  let carry = '';
 
-  while (true) {
-    const next = await Promise.race([pendingLog, exited.then(() => 'exited' as const)]);
+  for await (const log of cmd.logs()) {
+    carry += log.data;
 
-    if (next === 'exited') {
-      // Give output already in flight a moment to arrive, then stop waiting for the stream.
-      const drainUntil = Date.now() + 500;
+    const match = carry.match(EXIT_MARKER_RE);
 
-      while (Date.now() < drainUntil) {
-        const late = await Promise.race([
-          pendingLog,
-          new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 100)),
-        ]);
+    if (match) {
+      const before = carry.slice(0, match.index);
 
-        if (late === 'timeout' || late.done) {
-          break;
-        }
-
-        yield late.value.data;
-        pendingLog = logs.next();
+      if (before) {
+        yield before;
       }
 
-      pendingLog.catch(() => undefined); // the abandoned read may still reject when the stream closes
-      void logs.return?.(undefined).catch(() => undefined);
-
-      return exitCode ?? 1;
+      return parseInt(match[1], 10);
     }
 
-    if (next.done) {
-      await exited;
-      return exitCode ?? 1;
+    // Hold back a possible partial marker at the end; flush the rest.
+    const markerStart = carry.lastIndexOf('\n__SITARA');
+    const keep = markerStart !== -1 && carry.length - markerStart < 40 ? carry.slice(markerStart) : '';
+    const flush = carry.slice(0, carry.length - keep.length);
+
+    if (flush) {
+      yield flush;
     }
 
-    yield next.value.data;
-    pendingLog = logs.next();
+    carry = keep;
   }
+
+  if (carry) {
+    yield carry;
+  }
+
+  return (await cmd.wait()).exitCode ?? 1;
 }
 
 async function readPackageJson(sandbox: Sandbox): Promise<{ scripts?: Record<string, string> } | undefined> {
