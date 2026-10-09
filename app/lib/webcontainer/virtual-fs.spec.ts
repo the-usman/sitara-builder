@@ -16,6 +16,15 @@ describe('virtual project file system', () => {
     expect(await fs.readFile('/src/a.ts', 'utf-8')).toBe('one');
   });
 
+  it('never lets ".." climb above the project folder', async () => {
+    const { fs } = await webcontainer;
+
+    await fs.writeFile('../../README.md', '# hi');
+
+    expect(projectFiles.get()['/home/project/README.md']).toMatchObject({ type: 'file', content: '# hi' });
+    expect(Object.keys(projectFiles.get()).every((p) => p.startsWith('/home/project/'))).toBe(true);
+  });
+
   it('creates parent folders in the file tree', async () => {
     const { fs } = await webcontainer;
 

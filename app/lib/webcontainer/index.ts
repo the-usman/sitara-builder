@@ -90,7 +90,15 @@ function fsError(code: 'ENOENT' | 'EISDIR' | 'ENOTDIR', syscall: string, target:
  * ones (/src/a.ts — e.g. snapshot restore strips the workdir), and all mean the same file.
  */
 function resolvePath(target: string): string {
-  const absolute = target === WORK_DIR || target.startsWith(WORK_DIR + '/') ? target : pathUtils.join(WORK_DIR, target);
+  /*
+   * Anything not already under WORK_DIR is resolved against a virtual "/" first, so ".." can't
+   * climb above the project: ActionRunner turns an AI path like "/README.md" into
+   * "../../README.md" (relative to the workdir), which WebContainer also clamped to its root.
+   */
+  const absolute =
+    target === WORK_DIR || target.startsWith(WORK_DIR + '/')
+      ? target
+      : pathUtils.join(WORK_DIR, pathUtils.normalize('/' + target));
   const normalized = pathUtils.normalize(absolute);
 
   return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized;

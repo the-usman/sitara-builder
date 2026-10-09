@@ -250,6 +250,11 @@ export class WorkbenchStore {
     this.unsavedFiles.set(newUnsavedFiles);
   }
 
+  /** Saves a change made in the preview (visual text edit) as a user edit the AI is told about. */
+  async saveVisualEdit(filePath: string, content: string) {
+    await this.#filesStore.saveFile(filePath, content);
+  }
+
   async saveCurrentDocument() {
     const currentDocument = this.currentDocument.get();
 

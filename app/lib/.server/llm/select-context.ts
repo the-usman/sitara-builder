@@ -80,7 +80,8 @@ export async function selectContext(props: {
 
   let filePaths = getFilePaths(files || {});
   filePaths = filePaths.filter((x) => {
-    const relPath = x.replace('/home/project/', '');
+    // ignore() throws on absolute paths ("path should be a path.relative()d string")
+    const relPath = x.replace('/home/project/', '').replace(/^\/+/, '');
     return !ig.ignores(relPath);
   });
 
@@ -236,7 +237,8 @@ export async function selectContext(props: {
 export function getFilePaths(files: FileMap) {
   let filePaths = Object.keys(files);
   filePaths = filePaths.filter((x) => {
-    const relPath = x.replace('/home/project/', '');
+    // ignore() throws on absolute paths ("path should be a path.relative()d string")
+    const relPath = x.replace('/home/project/', '').replace(/^\/+/, '');
     return !ig.ignores(relPath);
   });
 

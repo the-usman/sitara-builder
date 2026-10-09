@@ -1,7 +1,12 @@
 import { memo, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'react-toastify';
-import { remotePreview, remoteSandboxAvailable, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
+import {
+  reconnectRemotePreview,
+  remotePreview,
+  remoteSandboxAvailable,
+  runRemotePreview,
+} from '~/lib/sandbox/remote-sandbox.client';
 import { workbenchStore } from '~/lib/stores/workbench';
 
 const STATUS_TEXT: Record<string, string> = {
@@ -29,6 +34,13 @@ export const RemotePreviewPanel = memo(() => {
   const available = useStore(remoteSandboxAvailable);
   const url = 'url' in state ? state.url : undefined;
   const openedFor = useRef<string | undefined>(undefined);
+
+  // Showing "not running"? The sandbox may already serve the preview (reload, status mix-up).
+  useEffect(() => {
+    if (state.status === 'idle' || state.status === 'stopped') {
+      void reconnectRemotePreview();
+    }
+  }, [state.status]);
 
   // Opening a tab without a click is usually blocked, so only a hint toast fires automatically.
   useEffect(() => {

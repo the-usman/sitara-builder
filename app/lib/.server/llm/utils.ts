@@ -59,7 +59,8 @@ export function createFilesContext(files: FileMap, useRelativePath?: boolean) {
   const ig = ignore().add(IGNORE_PATTERNS);
   let filePaths = Object.keys(files);
   filePaths = filePaths.filter((x) => {
-    const relPath = x.replace('/home/project/', '');
+    // ignore() throws on absolute paths ("path should be a path.relative()d string")
+    const relPath = x.replace('/home/project/', '').replace(/^\/+/, '');
     return !ig.ignores(relPath);
   });
 

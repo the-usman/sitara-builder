@@ -30,6 +30,7 @@ import { filesToArtifacts } from '~/utils/fileUtils';
 import { supabaseConnection } from '~/lib/stores/supabase';
 
 import { ChatLoadingScreen } from './ChatLoadingScreen';
+import { pendingChatPrompt, withSelectedElementContext } from '~/lib/stores/visual-edit';
 
 const toastAnimation = cssTransition({
   enter: 'animated fadeInRight',
@@ -439,6 +440,19 @@ export const ChatImpl = memo(
       setChatStarted(true);
     };
 
+    // A visual edit the preview couldn't apply directly arrives here as a ready-to-send prompt.
+    useEffect(
+      () =>
+        pendingChatPrompt.subscribe((prompt) => {
+          if (prompt) {
+            setInput(prompt);
+            pendingChatPrompt.set(undefined);
+            textareaRef.current?.focus();
+          }
+        }),
+      [setInput],
+    );
+
     const sendMessage = async (_event: React.UIEvent, messageInput?: string) => {
       const messageContent = messageInput || input;
 
@@ -466,8 +480,8 @@ export const ChatImpl = memo(
         return;
       }
 
-      // If no locked items, proceed normally with the original message
-      const finalMessageContent = messageContent;
+      // A section picked in the preview rides along so the model knows what "this" means.
+      const finalMessageContent = withSelectedElementContext(messageContent, workbenchStore.files.get());
 
       const savedAssetPaths = uploadedFiles.filter(isSavedProjectAsset).map((f) => `public/${f.name}`);
       const imageFilesNote =

@@ -2,6 +2,7 @@
  * @ts-nocheck
  * Preventing TS checks with files presented in the video for a better presentation.
  */
+import { SelectedElementChip } from './SelectedElementChip';
 import type { JSONValue, Message } from 'ai';
 import React, { type RefCallback, useEffect, useState } from 'react';
 import { ClientOnly } from 'remix-utils/client-only';
@@ -654,6 +655,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                       'relative shadow-xs border border-bolt-elements-borderColor backdrop-blur rounded-lg',
                     )}
                   >
+                    <ClientOnly>{() => <SelectedElementChip />}</ClientOnly>
                     <textarea
                       ref={textareaRef}
                       className={classNames(

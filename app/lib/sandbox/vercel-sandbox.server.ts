@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { getProviderToken } from '~/lib/config/provider-tokens.server';
 import type { ServerEnv } from '~/lib/mongo.server';
+import { PREVIEW_BRIDGE_SCRIPT } from './preview-bridge';
+import { DEV_PORT, PREVIEW_PROXY_SCRIPT, PROXY_PORT } from './preview-proxy';
 
 /*
  * Remote preview: each chat's project runs in a Vercel Sandbox (a Linux microVM) instead of
@@ -271,109 +273,74 @@ async function readPackageJson(sandbox: Sandbox): Promise<{ scripts?: Record<str
 }
 
 /*
- * Injected into the preview page so crashes reach the builder. A blank page is usually a
- * module that failed to load (resource error, captured below) or a render that threw.
- */
-const ERROR_REPORTER = `(function () {
-  var sent = 0;
-  function send(d) {
-    if (sent++ > 20) return;
-    d.url = location.href;
-    try { navigator.sendBeacon('/__sitara/error', JSON.stringify(d)); } catch (e) {}
-  }
-  window.addEventListener('error', function (e) {
-    var t = e.target;
-    if (t && t !== window && (t.src || t.href)) {
-      send({ kind: 'runtime', message: 'Failed to load ' + (t.src || t.href), stack: '' });
-      return;
-    }
-    send({ kind: 'runtime', message: String(e.message || (e.error && e.error.message) || 'Error'), stack: (e.error && e.error.stack) || '' });
-  }, true);
-  window.addEventListener('unhandledrejection', function (e) {
-    var r = e.reason;
-    send({ kind: 'runtime', message: 'Unhandled promise rejection: ' + ((r && r.message) || String(r)), stack: (r && r.stack) || '' });
-  });
-  window.addEventListener('load', function () {
-    setTimeout(function () {
-      var root = document.getElementById('root') || document.getElementById('app');
-      if (root && !root.children.length && !sent) {
-        send({ kind: 'runtime', message: 'The page rendered nothing (#' + root.id + ' is empty).', stack: '' });
-      }
-    }, 5000);
-  });
-})();`;
-
-/*
- * Wraps the project's own vite.config (whatever its name or language) and opens it to the
- * sandbox's public hostname. Vite rejects unknown Host headers ("Blocked request. This host
- * is not allowed"), and the `__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS` env var only exists in
- * newer Vite releases — templates pin Vite 5.4.x, which ignores it. It also injects the error
- * reporter above and collects its beacons. Lives under node_modules so it resolves `vite` from
- * the project, stays out of the user's file tree and is never synced.
+ * Wraps the project's own vite.config (whatever its name or language): binds the dev server to
+ * the internal DEV_PORT behind the preview proxy and accepts any Host header — Vite otherwise
+ * rejects the sandbox hostname ("Blocked request. This host is not allowed"); templates pin
+ * Vite 5.4.x, which predates the env-var override. Lives under node_modules so it resolves `vite`
+ * from the project, stays out of the user's file tree and is never synced.
  */
 const VITE_WRAPPER_PATH = 'node_modules/.sitara/vite.config.mjs';
-const VITE_WRAPPER = `import { appendFileSync } from 'node:fs';
-import { defineConfig, loadConfigFromFile, mergeConfig } from 'vite';
-
-const reporter = ${JSON.stringify(ERROR_REPORTER)};
-
-const sitaraErrors = {
-  name: 'sitara-preview-errors',
-  apply: 'serve',
-  configureServer(server) {
-    server.middlewares.use('/__sitara/error', (req, res) => {
-      let body = '';
-      req.on('data', (chunk) => { if (body.length < 20000) body += chunk; });
-      req.on('end', () => {
-        try { appendFileSync(${JSON.stringify(RUNTIME_ERRORS)}, JSON.stringify(JSON.parse(body)) + '\\n'); } catch {}
-        res.statusCode = 204;
-        res.end();
-      });
-    });
-  },
-  transformIndexHtml() {
-    return [{ tag: 'script', injectTo: 'head-prepend', children: reporter }];
-  },
-};
+const VITE_WRAPPER = `import { defineConfig, loadConfigFromFile, mergeConfig } from 'vite';
 
 export default defineConfig(async (env) => {
   const loaded = await loadConfigFromFile(env, undefined, process.cwd());
 
   return mergeConfig(loaded?.config ?? {}, {
-    plugins: [sitaraErrors],
-    server: { host: '0.0.0.0', allowedHosts: true },
+    server: { host: '0.0.0.0', port: ${DEV_PORT}, strictPort: true, allowedHosts: true },
   });
 });
 `;
 
+const BRIDGE_FILE = '/tmp/sitara-bridge.js';
+const PROXY_FILE = '/tmp/sitara-proxy.mjs';
+const PROXY_LOG = '/tmp/sitara-proxy.log';
+
+interface DevServerPlan {
+  command: string;
+
+  /** Dev server moved to DEV_PORT behind the preview proxy (bridge injection, visual editing). */
+  proxied: boolean;
+}
+
 /*
- * Vite binds to localhost by default (unreachable through the sandbox proxy) and checks the
- * Host header, so a Vite dev script is pointed at the wrapper config above.
+ * Known frameworks run behind the preview proxy: Vite via the wrapper config, Next.js via
+ * `-p DEV_PORT`. Anything else starts as written and is found by probing the usual ports.
  */
-async function adaptDevCommand(sandbox: Sandbox, command: string): Promise<string> {
+async function planDevServer(sandbox: Sandbox, command: string): Promise<DevServerPlan> {
   // Restored chats start with `npm install && npm run dev`; only the last step serves.
   const steps = command.split('&&');
   const last = steps[steps.length - 1].trim();
   const match = last.match(/^(npm|pnpm|yarn)\s+(?:run\s+)?([\w:-]+)$/);
 
   if (!match) {
-    return command;
+    return { command, proxied: false };
   }
 
   const pkg = await readPackageJson(sandbox);
   const script = pkg?.scripts?.[match[2]] || '';
+  const argSeparator = match[1] === 'npm' ? '-- ' : '';
+  let extraArgs: string | undefined;
 
   if (/^\s*vite(\s|$)/.test(script) && !/--config\b/.test(script)) {
     await sandbox.runCommand('mkdir', ['-p', `${PROJECT_DIR}/node_modules/.sitara`]);
     await sandbox.writeFiles([{ path: `${PROJECT_DIR}/${VITE_WRAPPER_PATH}`, content: Buffer.from(VITE_WRAPPER) }]);
-
-    const extraArgs = `--config ${VITE_WRAPPER_PATH} --host 0.0.0.0`;
-    steps[steps.length - 1] = ` ${last} ${match[1] === 'npm' ? '-- ' : ''}${extraArgs}`;
-
-    return steps.join('&&').trim();
+    extraArgs = `--config ${VITE_WRAPPER_PATH}`;
+  } else if (/^\s*next\s+dev\b/.test(script) && !/(\s-p\s|--port)/.test(script)) {
+    extraArgs = `-p ${DEV_PORT}`;
   }
 
-  return command;
+  if (!extraArgs) {
+    return { command, proxied: false };
+  }
+
+  steps[steps.length - 1] = ` ${last} ${argSeparator}${extraArgs}`;
+
+  return { command: steps.join('&&').trim(), proxied: true };
+}
+
+async function isPortOpen(sandbox: Sandbox, port: number): Promise<boolean> {
+  const result = await sandbox.runCommand('bash', ['-c', `(echo > /dev/tcp/127.0.0.1/${port}) 2>/dev/null`]);
+  return result.exitCode === 0;
 }
 
 async function findListeningPort(sandbox: Sandbox): Promise<number | undefined> {
@@ -392,28 +359,58 @@ async function findListeningPort(sandbox: Sandbox): Promise<number | undefined> 
 export type StartEvent = { type: 'log'; data: string } | { type: 'url'; url: string } | { type: 'exit'; code: number };
 
 /**
- * Restarts the dev server: kills the previous one, launches the new command in its own process
- * group, streams its output, and reports the public URL once a preview port accepts connections.
+ * Restarts the dev server: kills the previous one (and its proxy — same process group), launches
+ * the new command, streams its output, and reports the public URL once it accepts connections.
  * Output is also teed to DEV_LOG so build errors after startup can be collected (getPreviewErrors).
  */
 export async function* startDevServer(sandbox: Sandbox, command: string): AsyncGenerator<StartEvent> {
   await ensureProjectDir(sandbox);
+
+  /*
+   * Stop the previous dev server (and its proxy) and wait until the preview ports are really
+   * free — a new server started while the old one still holds them dies with EADDRINUSE.
+   * Escalates to SIGKILL, and finally frees the ports by force, if they don't free up.
+   */
+  const ports = [...new Set([...PREVIEW_PORTS, DEV_PORT])];
+  const anyPortBusy = ports.map((p) => `(echo > /dev/tcp/127.0.0.1/${p}) 2>/dev/null`).join(' || ');
   await sandbox.runCommand('bash', [
     '-c',
-    `[ -f ${DEV_PID_FILE} ] && kill -TERM -- -$(cat ${DEV_PID_FILE}) 2>/dev/null; rm -f ${DEV_PID_FILE} ${DEV_LOG_OFFSET} ${RUNTIME_ERRORS}; : > ${DEV_LOG}; true`,
+    `pg=$(cat ${DEV_PID_FILE} 2>/dev/null)
+[ -n "$pg" ] && kill -TERM -- -$pg 2>/dev/null
+for i in $(seq 1 30); do ${anyPortBusy} || break; sleep 0.1; done
+if ${anyPortBusy}; then
+  [ -n "$pg" ] && kill -KILL -- -$pg 2>/dev/null
+  sleep 0.3
+  for p in ${ports.join(' ')}; do fuser -k -n tcp $p 2>/dev/null; done
+  for i in $(seq 1 20); do ${anyPortBusy} || break; sleep 0.1; done
+fi
+rm -f ${DEV_PID_FILE} ${DEV_LOG_OFFSET} ${RUNTIME_ERRORS}; : > ${DEV_LOG}; true`,
   ]);
 
-  const devCommand = await adaptDevCommand(sandbox, command);
+  const plan = await planDevServer(sandbox, command);
   const previewHost = new URL(sandbox.domain(PREVIEW_PORTS[0])).hostname;
   const allowedHosts = '.' + previewHost.split('.').slice(1).join('.');
 
-  if (devCommand !== command) {
-    yield { type: 'log', data: `[sandbox] running: ${devCommand}\n` };
+  if (plan.command !== command) {
+    yield { type: 'log', data: `[sandbox] running: ${plan.command}\n` };
   }
+
+  if (plan.proxied) {
+    await sandbox.writeFiles([
+      { path: BRIDGE_FILE, content: Buffer.from(PREVIEW_BRIDGE_SCRIPT) },
+      { path: PROXY_FILE, content: Buffer.from(PREVIEW_PROXY_SCRIPT) },
+    ]);
+  }
+
+  const proxyStart = plan.proxied ? `node ${PROXY_FILE} > ${PROXY_LOG} 2>&1 & ` : '';
 
   const cmd = await sandbox.runCommand({
     cmd: 'setsid',
-    args: ['bash', '-lc', `set -o pipefail; echo $$ > ${DEV_PID_FILE}; { ${devCommand} ; } 2>&1 | tee -a ${DEV_LOG}`],
+    args: [
+      'bash',
+      '-lc',
+      `set -o pipefail; echo $$ > ${DEV_PID_FILE}; ${proxyStart}{ ${plan.command} ; } 2>&1 | tee -a ${DEV_LOG}`,
+    ],
     cwd: PROJECT_DIR,
     env: {
       HOST: '0.0.0.0',
@@ -422,6 +419,16 @@ export async function* startDevServer(sandbox: Sandbox, command: string): AsyncG
 
       // Newer Vite (and anything reading it) — older Vite is handled by the wrapper config.
       __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: allowedHosts,
+
+      ...(plan.proxied
+        ? {
+            PORT: String(DEV_PORT),
+            SITARA_PROXY_PORT: String(PROXY_PORT),
+            SITARA_DEV_PORT: String(DEV_PORT),
+            SITARA_BRIDGE_FILE: BRIDGE_FILE,
+            SITARA_ERRORS_FILE: RUNTIME_ERRORS,
+          }
+        : {}),
     },
     detached: true,
   });
@@ -454,6 +461,16 @@ export async function* startDevServer(sandbox: Sandbox, command: string): AsyncG
 
     while (!done && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      if (plan.proxied) {
+        // Ready once the dev server answers behind the proxy; the proxy port is the preview.
+        if ((await isPortOpen(sandbox, DEV_PORT).catch(() => false)) && (await isPortOpen(sandbox, PROXY_PORT))) {
+          push({ type: 'url', url: sandbox.domain(PROXY_PORT) });
+          return;
+        }
+
+        continue;
+      }
 
       const port = await findListeningPort(sandbox).catch(() => undefined);
 
@@ -565,7 +582,11 @@ async function findStoredSandbox(env: ServerEnv, name: string): Promise<Sandbox 
  * Keep-alive from an open builder tab. Never resumes a stopped sandbox — the client shows
  * "Restart preview" instead — and reports whether the dev server is still answering.
  */
-export async function pingChatSandbox(env: ServerEnv, userId: string, chatKey: string): Promise<{ running: boolean }> {
+export async function pingChatSandbox(
+  env: ServerEnv,
+  userId: string,
+  chatKey: string,
+): Promise<{ running: boolean; url?: string }> {
   const sandbox = await findStoredSandbox(env, sandboxName(userId, chatKey));
 
   if (!sandbox || sandbox.status !== 'running') {
@@ -574,7 +595,14 @@ export async function pingChatSandbox(env: ServerEnv, userId: string, chatKey: s
 
   await keepAlive(sandbox);
 
-  return { running: Boolean(await findListeningPort(sandbox).catch(() => undefined)) };
+  // The URL lets a builder that lost track (page reload, status mix-up) reconnect to the server.
+  if ((await isPortOpen(sandbox, DEV_PORT).catch(() => false)) && (await isPortOpen(sandbox, PROXY_PORT))) {
+    return { running: true, url: sandbox.domain(PROXY_PORT) };
+  }
+
+  const port = await findListeningPort(sandbox).catch(() => undefined);
+
+  return port ? { running: true, url: sandbox.domain(port) } : { running: false };
 }
 
 /*

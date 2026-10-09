@@ -8,6 +8,8 @@ import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
 import { ExpoQrModal } from '~/components/workbench/ExpoQrModal';
 import { previewReloadSignal, remotePreview, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
 import { RemotePreviewPanel } from './RemotePreviewPanel';
+import { usePreviewVisualEdit } from './usePreviewVisualEdit';
+import { previewEditMode, type PreviewEditMode } from '~/lib/stores/visual-edit';
 
 type ResizeSide = 'left' | 'right' | null;
 
@@ -61,6 +63,10 @@ export const Preview = memo(() => {
 
 const BrowserPreview = memo(() => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const editMode = useStore(previewEditMode);
+  const toggleEditMode = (next: PreviewEditMode) => previewEditMode.set(editMode === next ? 'off' : next);
+
+  usePreviewVisualEdit(iframeRef);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -649,7 +655,20 @@ const BrowserPreview = memo(() => {
             onClick={() => void runRemotePreview(workbenchStore.boltTerminal.terminal)}
           />
           <IconButton
+            icon="i-ph:cursor-click"
+            title="Select a section, then describe the change in the chat"
+            onClick={() => toggleEditMode('select')}
+            className={editMode === 'select' ? 'bg-accent-500/20 text-accent-500' : ''}
+          />
+          <IconButton
+            icon="i-ph:text-t"
+            title="Edit text: click any text in the preview and type"
+            onClick={() => toggleEditMode('text')}
+            className={editMode === 'text' ? 'bg-accent-500/20 text-accent-500' : ''}
+          />
+          <IconButton
             icon="i-ph:selection"
+            title="Screenshot an area into the chat"
             onClick={() => setIsSelectionMode(!isSelectionMode)}
             className={isSelectionMode ? 'bg-bolt-elements-background-depth-3' : ''}
           />

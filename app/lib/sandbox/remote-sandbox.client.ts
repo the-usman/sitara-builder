@@ -121,11 +121,13 @@ function releaseSandbox() {
 async function ping() {
   const state = remotePreview.get();
 
-  if (!binding?.used || state.status === 'idle' || state.status === 'stopped') {
+  if (!binding?.used || Date.now() - lastActivityAt > ACTIVE_WINDOW_MS) {
     return;
   }
 
-  if (Date.now() - lastActivityAt > ACTIVE_WINDOW_MS) {
+  // Idle/stopped: only check whether a server is (still) up to reconnect to — see reconnectRemotePreview.
+  if (state.status === 'idle' || state.status === 'stopped') {
+    await reconnectRemotePreview();
     return;
   }
 
@@ -135,14 +137,53 @@ async function ping() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'ping', chatKey: binding.key }),
     });
-    const data = (await res.json()) as { running?: boolean };
+    const data = (await res.json()) as { running?: boolean; url?: string };
     const current = remotePreview.get();
 
     // Busy states mean a command is mid-flight; only a finished preview can go stale.
     if (!data.running && (current.status === 'running' || current.status === 'error')) {
       remotePreview.set({ status: 'stopped', url: 'url' in current ? current.url : undefined });
+    } else if (data.running && data.url && current.status === 'error') {
+      remotePreview.set({ status: 'running', url: data.url });
     }
   } catch {}
+}
+
+/**
+ * When the builder shows no preview but this chat's sandbox already serves one (page reload, a
+ * status mix-up), adopt it instead of asking the user to run it again. Never creates a sandbox.
+ */
+export async function reconnectRemotePreview(): Promise<boolean> {
+  const state = remotePreview.get();
+
+  if (state.status !== 'idle' && state.status !== 'stopped' && state.status !== 'error') {
+    return state.status === 'running';
+  }
+
+  if (!(await isRemoteSandboxEnabled())) {
+    return false;
+  }
+
+  try {
+    const res = await fetch('/api/sandbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'ping', chatKey: await sandboxKey() }),
+    });
+    const data = (await res.json()) as { running?: boolean; url?: string };
+    const current = remotePreview.get();
+
+    if (
+      data.running &&
+      data.url &&
+      (current.status === 'idle' || current.status === 'stopped' || current.status === 'error')
+    ) {
+      remotePreview.set({ status: 'running', url: data.url });
+      return true;
+    }
+  } catch {}
+
+  return false;
 }
 
 function installLifecycleHandlers() {
@@ -214,6 +255,11 @@ export async function runRemotePreview(terminal?: RemoteTerminal) {
     return;
   }
 
+  // "Run preview" while a server is in fact already up just reconnects to it.
+  if (remotePreview.get().status === 'idle' && (await reconnectRemotePreview())) {
+    return;
+  }
+
   const command = lastStartCommand ?? detectStartCommand();
 
   if (!command) {
@@ -227,7 +273,7 @@ export async function runRemotePreview(terminal?: RemoteTerminal) {
 
   const hasInstall = /\b(npm|pnpm|yarn|bun)\s+(i|install|ci)\b/.test(command);
   lastFilesChangeAt = 0;
-  await startRemoteDevServer(hasInstall ? command : `npm install && ${command}`, terminal);
+  await startRemoteDevServer(hasInstall ? command : `npm install && ${command}`, terminal, { force: true });
 }
 
 export const restartRemotePreview = runRemotePreview;
@@ -578,28 +624,103 @@ export async function runRemoteShell(command: string, terminal?: RemoteTerminal,
 
   const result = await streamCommand('run', command, terminal, options);
 
-  if (!affectsPreview) {
+  if (!affectsPreview || !isInstall) {
     return result;
   }
 
-  if (result.exitCode !== 0) {
-    remotePreview.set({
-      status: 'error',
-      error: `\`${command}\` failed`,
-      url: 'url' in previous ? previous.url : undefined,
-    });
-  } else {
-    remotePreview.set(previous);
+  /*
+   * Only undo our own "installing" status. Restoring the status captured before the command
+   * clobbered newer states: a start action doesn't block the next action, so an install that
+   * began while the preview was idle/starting would finish and flip a now-running preview back
+   * to "not running". A failed command is reported in the terminal and alert, not by hiding
+   * a working preview.
+   */
+  const current = remotePreview.get();
 
-    if (isInstall && previous.status === 'running') {
-      previewReloadSignal.set(previewReloadSignal.get() + 1);
-    }
+  if (current.status === 'installing') {
+    remotePreview.set(previous.status === 'installing' ? { status: 'idle' } : previous);
+  }
+
+  if (result.exitCode === 0 && remotePreview.get().status === 'running') {
+    previewReloadSignal.set(previewReloadSignal.get() + 1);
   }
 
   return result;
 }
 
-export async function startRemoteDevServer(command: string, terminal?: RemoteTerminal) {
+type StartResult = Awaited<ReturnType<typeof streamCommand>>;
+
+/** "npm install && npm run dev" → "npm run dev": the step that actually serves. */
+function serveStep(command: string): string {
+  const steps = command.split('&&');
+  return steps[steps.length - 1].trim().replace(/\s+/g, ' ');
+}
+
+/** "npm install && npm run dev" → "npm install"; undefined when there's nothing before the serve step. */
+function setupSteps(command: string): string | undefined {
+  const steps = command.split('&&');
+  return steps.length > 1 ? steps.slice(0, -1).join('&&').trim() : undefined;
+}
+
+let startQueue: Promise<unknown> = Promise.resolve();
+let inflightStart: { command: string; promise: Promise<StartResult> } | undefined;
+
+/*
+ * Starts must never overlap: each one kills the previous dev server, so two at once fight over
+ * the ports ("Port 3001 is already in use") and fail in a loop. Start actions don't wait for
+ * each other (and a reopened chat replays several), so starts are queued here; a duplicate of
+ * the start in flight joins it, and re-starting the server that's already running is skipped
+ * unless `force` (the Restart button).
+ */
+export function startRemoteDevServer(
+  command: string,
+  terminal?: RemoteTerminal,
+  { force = false }: { force?: boolean } = {},
+): Promise<StartResult> {
+  const state = remotePreview.get();
+
+  /*
+   * The AI routinely ends a reply with "npm run dev" (often after an install) although the
+   * server is already up; restarting it just takes the preview away. Same serve step → keep the
+   * server, run only the setup steps in front of it (installs), and let the dev server pick
+   * the changes up (Vite/Next reload new deps and config changes on their own).
+   */
+  if (!force && state.status === 'running' && lastStartCommand && serveStep(command) === serveStep(lastStartCommand)) {
+    const setup = setupSteps(command);
+
+    if (!setup) {
+      return Promise.resolve({ exitCode: 0, output: '', url: state.url });
+    }
+
+    // The preview stays visible during the install, then reloads to pick up the new packages.
+    return runRemoteShell(setup, terminal, { affectsPreview: false }).then((result) => {
+      if (result.exitCode === 0) {
+        previewReloadSignal.set(previewReloadSignal.get() + 1);
+      }
+
+      return { ...result, url: result.exitCode === 0 ? state.url : undefined };
+    });
+  }
+
+  if (!force && inflightStart?.command === command) {
+    return inflightStart.promise;
+  }
+
+  const promise = startQueue.then(() => runStart(command, terminal));
+  startQueue = promise.catch(() => undefined);
+  inflightStart = { command, promise };
+  promise
+    .finally(() => {
+      if (inflightStart?.promise === promise) {
+        inflightStart = undefined;
+      }
+    })
+    .catch(() => undefined);
+
+  return promise;
+}
+
+async function runStart(command: string, terminal?: RemoteTerminal): Promise<StartResult> {
   lastStartCommand = command;
   reportedErrors.clear();
   remotePreview.set({ status: 'starting' });
