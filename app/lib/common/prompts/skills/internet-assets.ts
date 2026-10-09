@@ -103,7 +103,7 @@ export const internetAssetsSkill: PromptSkill = {
   </script>
   \`\`\`
 
-  ### React / Next.js component (when GLB URL is provided by user):
+  ### React component in TanStack Start (when GLB URL is provided by user) — render inside <ClientOnly> from @tanstack/react-router:
   \`\`\`tsx
   import { useEffect } from 'react';
 

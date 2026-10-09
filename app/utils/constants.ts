@@ -1,3 +1,4 @@
+import { TANSTACK_START_TEMPLATE } from './templates/tanstack-start';
 import { LLMManager } from '~/lib/modules/llm/manager';
 import type { Template } from '~/types/template';
 
@@ -27,11 +28,13 @@ PROVIDER_LIST.forEach((provider) => {
 // Next.js is the only supported stack: previews run on Vercel Sandbox and sites publish to Vercel.
 export const STARTER_TEMPLATES: Template[] = [
   {
-    name: 'NextJS Shadcn',
-    label: 'Next.js with shadcn/ui',
-    description: 'Next.js starter fullstack template integrated with shadcn/ui components and styling system',
-    githubRepo: 'xKevIsDev/bolt-nextjs-shadcn-template',
-    tags: ['nextjs', 'react', 'typescript', 'shadcn', 'tailwind'],
-    icon: 'i-bolt:nextjs',
+    name: 'TanStack Start',
+    label: 'TanStack Start + Tailwind CSS',
+    description:
+      'Full-stack React (TanStack Start: SSR, file-based routing, server functions) styled with Tailwind CSS v4',
+    githubRepo: '',
+    localFiles: TANSTACK_START_TEMPLATE,
+    tags: ['tanstack', 'react', 'typescript', 'tailwind', 'vite'],
+    icon: 'i-bolt:react',
   },
 ];

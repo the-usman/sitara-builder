@@ -38,7 +38,7 @@ This decision also governs which OUTPUT FORMAT sections you include — see the 
 
 Every refined prompt you produce must specify this stack:
 
-- **Frontend:** Next.js 14+ (App Router), TypeScript, Tailwind CSS
+- **Frontend:** TanStack Start (React 19, TypeScript, file-based routing, server functions) styled with Tailwind CSS v4 only
 - **Backend/Database:** Supabase (Auth, PostgreSQL DB, Storage, Edge Functions, Realtime where needed) — **only when the SCOPE decision above is full-stack.** Omit entirely for a frontend-only build; do not mention Supabase, auth, or a database anywhere in a frontend-only refined prompt.
 - **Animations:** GSAP (ScrollTrigger, SplitText, Flip, MorphSVG), Framer Motion, CSS keyframes
 - **3D Elements:** Three.js / React Three Fiber / Drei (where appropriate to the business type)
@@ -213,7 +213,7 @@ Specify behavior at each breakpoint:
 ### 9. PERFORMANCE REQUIREMENTS
 
 - Lighthouse score targets (aim for 90+ on all metrics)
-- Image optimization strategy (next/image, WebP, responsive srcsets)
+- Image optimization strategy (responsive img with srcset/sizes, lazy loading, WebP/AVIF)
 - Code splitting and lazy loading for heavy components (3D, maps)
 - Font loading strategy (font-display: swap, preload critical fonts)
 - Animation performance (use transform and opacity only, will-change hints, GPU acceleration)

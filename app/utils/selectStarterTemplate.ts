@@ -3,10 +3,11 @@ import type { ProviderInfo } from '~/types/model';
 import { STARTER_TEMPLATES } from './constants';
 
 /*
- * Next.js is the only supported stack, so every new chat starts from the same template. This
- * used to be an extra LLM round-trip choosing between a dozen frameworks before the first reply.
+ * TanStack Start + Tailwind CSS is the only supported stack, so every new chat starts from the
+ * same built-in template (app/utils/templates/tanstack-start.ts). This used to be an extra LLM
+ * round-trip choosing between a dozen frameworks before the first reply.
  */
-export const NEXTJS_TEMPLATE_NAME = 'NextJS Shadcn';
+export const STARTER_TEMPLATE_NAME = 'TanStack Start';
 
 function titleFromMessage(message: string): string {
   const words = message
@@ -17,11 +18,11 @@ function titleFromMessage(message: string): string {
     .slice(0, 8)
     .join(' ');
 
-  return words || 'Next.js Project';
+  return words || 'TanStack Start Project';
 }
 
 export const selectStarterTemplate = async (options: { message: string; model?: string; provider?: ProviderInfo }) => {
-  return { template: NEXTJS_TEMPLATE_NAME, title: titleFromMessage(options.message) };
+  return { template: STARTER_TEMPLATE_NAME, title: titleFromMessage(options.message) };
 };
 
 const getGitHubRepoContent = async (repoName: string): Promise<{ name: string; path: string; content: string }[]> => {
@@ -50,8 +51,9 @@ export async function getTemplates(templateName: string, title?: string) {
     return null;
   }
 
-  const githubRepo = template.githubRepo;
-  const files = await getGitHubRepoContent(githubRepo);
+  const files = template.localFiles
+    ? template.localFiles.map((file) => ({ ...file, name: file.path.split('/').pop() || file.path }))
+    : await getGitHubRepoContent(template.githubRepo);
 
   let filteredFiles = files;
 
@@ -70,10 +72,6 @@ export async function getTemplates(templateName: string, title?: string) {
      *const comminLockFiles = ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'];
      *filteredFiles = filteredFiles.filter((x) => comminLockFiles.includes(x.name) == false);
      */
-  }
-
-  if (template.name === NEXTJS_TEMPLATE_NAME) {
-    filteredFiles = modernizeNextTemplate(filteredFiles);
   }
 
   // exclude    .bolt
@@ -168,41 +166,4 @@ IMPORTANT: Dont Forget to install the dependencies before running the app by usi
     assistantMessage,
     userMessage,
   };
-}
-
-/*
- * The upstream template pins Next.js 13.5.1 plus @next/swc-wasm-nodejs (only needed to compile
- * inside the browser's WebContainer). Previews now run on Vercel Sandbox with native SWC, so
- * bump to the latest Next 14 (still React 18, which the shadcn components target) and drop the
- * lockfile, which would otherwise pin the old versions.
- */
-const NEXT_VERSION = '14.2.35';
-
-function modernizeNextTemplate<T extends { name: string; path: string; content: string }>(files: T[]): T[] {
-  return files
-    .filter((file) => file.path !== 'package-lock.json')
-    .map((file) => {
-      if (file.path !== 'package.json') {
-        return file;
-      }
-
-      try {
-        const pkg = JSON.parse(file.content);
-        const deps = pkg.dependencies ?? {};
-
-        delete deps['@next/swc-wasm-nodejs'];
-
-        if (deps.next) {
-          deps.next = NEXT_VERSION;
-        }
-
-        if (deps['eslint-config-next']) {
-          deps['eslint-config-next'] = NEXT_VERSION;
-        }
-
-        return { ...file, content: JSON.stringify(pkg, null, 2) + '\n' };
-      } catch {
-        return file;
-      }
-    });
 }

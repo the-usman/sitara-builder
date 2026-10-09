@@ -467,7 +467,7 @@ export const threejs3dSkill: PromptSkill = {
   });
   \`\`\`
 
-  ## React / Next.js Component
+  ## React Component (TanStack Start) — three.js needs the browser: render it inside <ClientOnly> from @tanstack/react-router
   \`\`\`tsx
   import { useEffect, useRef } from 'react';
   import * as THREE from 'three';

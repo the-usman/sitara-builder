@@ -61,17 +61,25 @@ export const spline3dSkill: PromptSkill = {
   }
   \`\`\`
 
-  ### Option C — Next.js (App Router) — MUST be a client component
+  ### Option C — TanStack Start (server-rendered) — MUST render only in the browser
   \`\`\`tsx
-  'use client';
-  import Spline from '@splinetool/react-spline/next'; // SSR placeholder + better LCP
+  import { lazy, Suspense } from 'react';
+  import { ClientOnly } from '@tanstack/react-router';
+
+  const Spline = lazy(() => import('@splinetool/react-spline'));
 
   export default function Scene() {
-    return <Spline scene="https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode" />;
+    return (
+      <ClientOnly fallback={<div className="h-[600px] w-full animate-pulse bg-slate-900" />}>
+        <Suspense fallback={null}>
+          <Spline scene="https://prod.spline.design/6Wq1Q7YGyM-iab9i/scene.splinecode" />
+        </Suspense>
+      </ClientOnly>
+    );
   }
   \`\`\`
-  Alternatively \`const Spline = dynamic(() => import('@splinetool/react-spline'), { ssr: false })\`.
-  NEVER import react-spline into a Server Component — it touches \`window\` and causes hydration errors.
+  NEVER render react-spline during server rendering — it touches \`window\` and breaks SSR/hydration.
+  Always wrap it in <ClientOnly> with a lazy import, as above.
 
   ### Option D — Vanilla runtime Application (HTML, full programmatic control)
   \`\`\`html
@@ -240,7 +248,7 @@ export const spline3dSkill: PromptSkill = {
   - \`emitEvent\` no-op → only call after \`onLoad\` fired; gate with an \`isLoaded\` flag.
   - Object \`undefined\` → name mismatch, or called before \`onLoad\`; use \`findObjectById\` for renamed objects.
   - Refs lost after re-render → store \`app\` and found objects in \`useRef\`, never plain module/local vars.
-  - Next.js hydration error → \`'use client'\` + \`@splinetool/react-spline/next\`, or \`dynamic(..., { ssr:false })\`.
+  - \`window is not defined\` / hydration error → render inside <ClientOnly> from @tanstack/react-router with a lazy import (Option C).
   - Color not changing → \`obj.material.color.set(0xff6b6b)\`, NOT \`obj.material.color = '#ff6b6b'\`.
   - Rotation looks wrong → values are RADIANS: \`deg * Math.PI / 180\`.
 

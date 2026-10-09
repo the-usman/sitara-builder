@@ -71,7 +71,7 @@ export const uiUxDesignSkill: PromptSkill = {
   EVERY website or landing page you generate MUST include rich scroll-driven animations. This is non-negotiable — a static page with no motion is unprofessional.
 
   ### Library Choice
-  - **React / Next.js projects** → use **Framer Motion** (\`framer-motion\` package)
+  - **React (TanStack Start) projects** → use **Framer Motion** (\`framer-motion\` package)
   - **Plain HTML / Tailwind / Vanilla JS** → use **GSAP** with \`ScrollTrigger\` plugin
   - Both libraries must be installed as dependencies in \`package.json\`
 

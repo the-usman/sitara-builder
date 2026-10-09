@@ -1,5 +1,10 @@
 import type { PromptSkill } from './types';
 
+/*
+ * Full-stack guidance for the one supported stack: TanStack Start (server functions, server
+ * routes, loaders) + Tailwind CSS. The API shapes below were verified against
+ * @tanstack/react-start 1.168 / @tanstack/react-router 1.170 in a sandbox.
+ */
 export const fullstackSkill: PromptSkill = {
   name: 'fullstack',
   description: 'Full-stack app patterns: backend APIs, auth flows, payments, server architecture, data modeling.',
@@ -9,13 +14,15 @@ export const fullstackSkill: PromptSkill = {
 <fullstack_skill>
   When the user asks for a full-stack website, API, dashboard, SaaS, or any project that needs
   a backend, database, or auth — follow this protocol BEFORE writing any code.
+  The stack is ALWAYS TanStack Start + Tailwind CSS: the backend lives in the same project as
+  server functions and server routes. Never add Express, Next.js, FastAPI or a separate backend.
 
   ═══════════════════════════════════════════════════════
   ## STEP 1 — ALWAYS ask for required variables first
   ═══════════════════════════════════════════════════════
 
   Before generating any code, output a single message that:
-  1. States the stack you will build (Next.js App Router / FastAPI)
+  1. States the plan (TanStack Start server functions + the database/services you will use)
   2. Lists every environment variable the project needs with a short description
   3. Offers a **Demo Mode** fallback for the database if the user doesn't have credentials
 
@@ -23,15 +30,14 @@ export const fullstackSkill: PromptSkill = {
 
   > **Before I build, I need a few details:**
   >
-  > **Stack:** Next.js 14 App Router + PostgreSQL  (or FastAPI + MongoDB, etc.)
+  > **Stack:** TanStack Start (server functions) + Tailwind CSS + PostgreSQL
   >
   > **Required variables — please provide values, or type "demo" for any you don't have yet:**
   >
   > | Variable | Purpose | Example |
   > |---|---|---|
   > | \`DATABASE_URL\` | Postgres connection | \`postgresql://user:pass@host/db\` |
-  > | \`NEXTAUTH_SECRET\` | Session encryption (32-char random string) | run: \`openssl rand -base64 32\` |
-  > | \`NEXTAUTH_URL\` | App URL | \`http://localhost:3000\` |
+  > | \`SESSION_SECRET\` | Signs login sessions (32+ random characters) | run: \`openssl rand -base64 32\` |
   > | \`RESEND_API_KEY\` | Email sending | \`re_xxxx\` |
   >
   > Type **"demo"** for any variable you don't have — I'll substitute a working local alternative.
@@ -39,330 +45,187 @@ export const fullstackSkill: PromptSkill = {
   NEVER skip this step. NEVER assume env var values. NEVER hardcode credentials.
 
   ═══════════════════════════════════════════════════════
-  ## STEP 2 — Required variables by stack & service
+  ## STEP 2 — Required variables by service
   ═══════════════════════════════════════════════════════
 
-  Ask ONLY for variables that the project actually uses. Use this table:
+  Ask ONLY for variables the project actually uses. Server-only secrets have no prefix and are read
+  with \`process.env.X\` inside server functions / server routes. Values the browser needs must be
+  prefixed \`VITE_\` and are read with \`import.meta.env.VITE_X\` — never put a secret in a VITE_ variable.
 
   | Service | Variables to ask for |
   |---|---|
-  | **Supabase** | \`NEXT_PUBLIC_SUPABASE_URL\`, \`NEXT_PUBLIC_SUPABASE_ANON_KEY\`, \`SUPABASE_SERVICE_ROLE_KEY\` |
+  | **Supabase** | \`VITE_SUPABASE_URL\`, \`VITE_SUPABASE_ANON_KEY\`, \`SUPABASE_SERVICE_ROLE_KEY\` |
   | **MongoDB Atlas** | \`MONGODB_URI\` (format: \`mongodb+srv://user:pass@cluster.mongodb.net/dbname\`) |
   | **PostgreSQL** | \`DATABASE_URL\` (format: \`postgresql://user:pass@host:5432/dbname\`) |
   | **MySQL** | \`DATABASE_URL\` (format: \`mysql://user:pass@host:3306/dbname\`) |
   | **Redis** | \`REDIS_URL\` (format: \`redis://default:pass@host:6379\`) |
-  | **NextAuth.js** | \`NEXTAUTH_SECRET\` (random 32-char string), \`NEXTAUTH_URL\` |
-  | **Clerk auth** | \`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\`, \`CLERK_SECRET_KEY\` |
-  | **Stripe** | \`STRIPE_SECRET_KEY\`, \`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY\`, \`STRIPE_WEBHOOK_SECRET\` |
+  | **Sessions / auth** | \`SESSION_SECRET\` (random 32+ characters) |
+  | **Stripe** | \`STRIPE_SECRET_KEY\`, \`VITE_STRIPE_PUBLISHABLE_KEY\`, \`STRIPE_WEBHOOK_SECRET\` |
   | **Resend email** | \`RESEND_API_KEY\` |
-  | **SendGrid** | \`SENDGRID_API_KEY\` |
   | **Cloudinary** | \`CLOUDINARY_CLOUD_NAME\`, \`CLOUDINARY_API_KEY\`, \`CLOUDINARY_API_SECRET\` |
   | **AWS S3** | \`AWS_ACCESS_KEY_ID\`, \`AWS_SECRET_ACCESS_KEY\`, \`AWS_REGION\`, \`AWS_BUCKET_NAME\` |
-  | **Pusher** | \`PUSHER_APP_ID\`, \`PUSHER_KEY\`, \`PUSHER_SECRET\`, \`PUSHER_CLUSTER\` |
   | **OpenAI** | \`OPENAI_API_KEY\` |
-  | **FastAPI JWT** | \`SECRET_KEY\` (random 32-char), \`ALGORITHM\` (default: \`HS256\`), \`ACCESS_TOKEN_EXPIRE_MINUTES\` |
 
   ═══════════════════════════════════════════════════════
   ## STEP 3 — Demo Mode (user types "demo" for a variable)
   ═══════════════════════════════════════════════════════
 
-  If the user cannot provide a database credential, substitute a **fully working local alternative**
-  that requires zero external accounts. The app must still work — no broken pages.
+  If the user cannot provide a credential, substitute a **fully working local alternative** that
+  requires zero external accounts. The app must still work — no broken pages.
 
   | Real service | Demo substitute | How |
   |---|---|---|
-  | PostgreSQL / MySQL | **SQLite** via Prisma | \`datasource db { provider = "sqlite" url = "file:./dev.db" }\` |
-  | MongoDB | **lowdb** (JSON file DB) | \`npm install lowdb@3\` — stores data in \`db.json\` |
-  | Redis | **In-memory Map** | Simple JS \`Map\` as a module-level singleton |
-  | Auth / sessions | **iron-session** with cookie | No external service needed |
-  | Email | **Console log** stub | Log the email content to stdout, show it on screen |
-  | File storage | **Local \`/public/uploads\`** | Save files to disk in the WebContainer |
+  | PostgreSQL / MySQL | **SQLite** via \`@libsql/client\` | \`createClient({ url: 'file:dev.db' })\` |
+  | MongoDB | **lowdb** (JSON file DB) | \`npm install lowdb\` — stores data in \`db.json\` |
+  | Redis | **In-memory Map** | A module-level \`Map\` singleton |
+  | Sessions | **Signed cookie** with a demo secret | See the session example below |
+  | Email | **Console log** stub | Log the email and show it on screen |
+  | File storage | **public/uploads** | Write files under \`public/uploads\` |
 
   When using demo mode:
-  - Add a visible yellow banner: \`⚠️ Running in Demo Mode — data resets on restart\`
-  - Set \`DATABASE_URL="file:./dev.db"\` in \`.env.local\` automatically
+  - Show a visible banner: \`⚠️ Running in Demo Mode — data resets on restart\`
+  - Write the demo values into \`.env\` automatically
   - Comment every demo substitution with \`// DEMO MODE — replace with real value in production\`
-  - Structure the code so swapping to production only requires updating \`.env\` — no code changes
+  - Structure the code so going to production only requires updating \`.env\` — no code changes
 
   ═══════════════════════════════════════════════════════
-  ## Next.js 14 App Router — Full-Stack Scaffold
+  ## TanStack Start — Full-Stack Scaffold
   ═══════════════════════════════════════════════════════
 
-  ### Folder structure
+  ### Folder structure (inside the starter template)
   \`\`\`
-  app/
-    (auth)/
-      login/page.tsx
-      register/page.tsx
-    (dashboard)/
-      layout.tsx          ← protected layout (redirects if not authed)
-      page.tsx
-    api/
-      auth/[...nextauth]/route.ts
-      [resource]/
-        route.ts          ← GET list, POST create
-        [id]/route.ts     ← GET one, PUT update, DELETE
-    layout.tsx            ← root layout with providers
-    page.tsx              ← public landing page
-  components/
-    ui/                   ← shadcn/ui or custom primitives
-    forms/
-    layout/
-  lib/
-    db.ts                 ← database client singleton
-    auth.ts               ← auth options / session helpers
-    validations.ts        ← zod schemas
-  middleware.ts           ← route protection
-  .env.local              ← all secrets (gitignored)
+  src/
+    routes/
+      __root.tsx              ← HTML shell, site-wide layout
+      index.tsx               ← landing page "/"
+      login.tsx               ← "/login"
+      dashboard/
+        route.tsx             ← layout for /dashboard/* — beforeLoad redirects if not logged in
+        index.tsx             ← "/dashboard"
+      api/
+        posts.ts              ← server route (REST endpoint) — only when an external client needs it
+    server/
+      db.ts                   ← database client singleton (server-only)
+      session.ts              ← session helpers (server-only)
+      posts.ts                ← server functions for one resource
+    components/
+    lib/
+      validations.ts          ← zod schemas shared by forms and server functions
+  .env                        ← all secrets (never commit)
   \`\`\`
 
-  ### Database client singleton (Prisma example)
+  ### Server functions — the default way to talk to the backend
   \`\`\`typescript
-  // lib/db.ts
+  // src/server/posts.ts
+  import { createServerFn } from '@tanstack/react-start';
+  import { z } from 'zod';
+  import { db } from './db';
+  import { requireUser } from './session';
+
+  export const listPosts = createServerFn({ method: 'GET' }).handler(async () => {
+    return db.post.findMany({ orderBy: { createdAt: 'desc' } });
+  });
+
+  const createPostSchema = z.object({ title: z.string().min(1), content: z.string() });
+
+  export const createPost = createServerFn({ method: 'POST' })
+    .validator((data: unknown) => createPostSchema.parse(data))
+    .handler(async ({ data }) => {
+      const user = await requireUser();
+      return db.post.create({ data: { ...data, authorId: user.id } });
+    });
+  \`\`\`
+  Use \`.validator()\` (not the deprecated \`.inputValidator()\`).
+
+  ### Loading data in a route, calling a server function from a component
+  \`\`\`tsx
+  // src/routes/index.tsx
+  import { createFileRoute, useRouter } from '@tanstack/react-router';
+  import { listPosts, createPost } from '@/server/posts';
+
+  export const Route = createFileRoute('/')({
+    loader: () => listPosts(),
+    component: Home,
+  });
+
+  function Home() {
+    const posts = Route.useLoaderData();
+    const router = useRouter();
+
+    async function onSubmit(form: FormData) {
+      await createPost({ data: { title: String(form.get('title')), content: String(form.get('content')) } });
+      await router.invalidate(); // re-runs the loader
+    }
+
+    return (/* Tailwind-styled list and form */);
+  }
+  \`\`\`
+
+  ### Server routes (REST endpoints, webhooks)
+  Only when something outside the app must call it (Stripe webhooks, mobile apps, third parties).
+  \`\`\`typescript
+  // src/routes/api/posts.ts
+  import { createFileRoute } from '@tanstack/react-router';
+  import { db } from '@/server/db';
+
+  export const Route = createFileRoute('/api/posts')({
+    server: {
+      handlers: {
+        GET: async () => Response.json(await db.post.findMany()),
+        POST: async ({ request }) => {
+          const body = await request.json();
+          return Response.json(await db.post.create({ data: body }), { status: 201 });
+        },
+      },
+    },
+  });
+  \`\`\`
+
+  ### Protecting routes
+  \`\`\`tsx
+  // src/routes/dashboard/route.tsx
+  import { createFileRoute, redirect, Outlet } from '@tanstack/react-router';
+  import { getCurrentUser } from '@/server/session';
+
+  export const Route = createFileRoute('/dashboard')({
+    beforeLoad: async () => {
+      const user = await getCurrentUser();
+      if (!user) throw redirect({ to: '/login' });
+      return { user };
+    },
+    component: () => <Outlet />,
+  });
+  \`\`\`
+  Server functions that change data must ALSO check the session (\`requireUser()\`) — never rely on
+  the route guard alone.
+
+  ### Sessions (signed cookie, no external service)
+  Implement in \`src/server/session.ts\` with server functions: read/write the cookie with \`getCookie\` /
+  \`setCookie\` from \`@tanstack/react-start/server\`, sign it with \`jose\` (SignJWT / jwtVerify using
+  \`process.env.SESSION_SECRET\`), set it httpOnly + sameSite 'lax' + secure in production, and hash
+  passwords with \`bcryptjs\`. Export \`getCurrentUser\` (createServerFn GET returning the user or null) and
+  a plain \`requireUser()\` helper used inside other server functions.
+
+  ### Database client singleton
+  \`\`\`typescript
+  // src/server/db.ts
   import { PrismaClient } from '@prisma/client';
-  const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+  const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
   export const db = globalForPrisma.prisma ?? new PrismaClient();
   if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
   \`\`\`
+  Files under \`src/server/\` must only be imported from server functions, server routes and loaders'
+  server functions — never import a database client into a component directly.
 
-  ### Database client singleton (MongoDB + Mongoose example)
-  \`\`\`typescript
-  // lib/db.ts
-  import mongoose from 'mongoose';
-  const MONGODB_URI = process.env.MONGODB_URI!;
-  let cached = (global as any).mongoose ?? { conn: null, promise: null };
-  export async function connectDB() {
-    if (cached.conn) return cached.conn;
-    cached.promise ??= mongoose.connect(MONGODB_URI, { bufferCommands: false });
-    cached.conn = await cached.promise;
-    return cached.conn;
-  }
-  \`\`\`
-
-  ### API route pattern (App Router)
-  \`\`\`typescript
-  // app/api/posts/route.ts
-  import { NextRequest, NextResponse } from 'next/server';
-  import { getServerSession } from 'next-auth';
-  import { authOptions } from '@/lib/auth';
-  import { db } from '@/lib/db';
-  import { z } from 'zod';
-
-  const createSchema = z.object({ title: z.string().min(1), content: z.string() });
-
-  export async function GET() {
-    const posts = await db.post.findMany({ orderBy: { createdAt: 'desc' } });
-    return NextResponse.json(posts);
-  }
-
-  export async function POST(req: NextRequest) {
-    const session = await getServerSession(authOptions);
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    const body = createSchema.safeParse(await req.json());
-    if (!body.success) return NextResponse.json({ error: body.error.flatten() }, { status: 400 });
-    const post = await db.post.create({ data: { ...body.data, authorId: session.user.id } });
-    return NextResponse.json(post, { status: 201 });
-  }
-  \`\`\`
-
-  ### Middleware (route protection)
-  \`\`\`typescript
-  // middleware.ts
-  import { withAuth } from 'next-auth/middleware';
-  export default withAuth({ pages: { signIn: '/login' } });
-  export const config = { matcher: ['/dashboard/:path*', '/api/protected/:path*'] };
-  \`\`\`
-
-  ### NextAuth setup
-  \`\`\`typescript
-  // lib/auth.ts
-  import type { NextAuthOptions } from 'next-auth';
-  import CredentialsProvider from 'next-auth/providers/credentials';
-  import bcrypt from 'bcryptjs';
-  import { db } from './db';
-
-  export const authOptions: NextAuthOptions = {
-    providers: [
-      CredentialsProvider({
-        name: 'credentials',
-        credentials: { email: { label: 'Email', type: 'email' }, password: { label: 'Password', type: 'password' } },
-        async authorize(creds) {
-          if (!creds?.email || !creds.password) return null;
-          const user = await db.user.findUnique({ where: { email: creds.email } });
-          if (!user || !(await bcrypt.compare(creds.password, user.password))) return null;
-          return { id: user.id, email: user.email, name: user.name };
-        }
-      })
-    ],
-    session: { strategy: 'jwt' },
-    callbacks: {
-      jwt: async ({ token, user }) => { if (user) token.id = user.id; return token; },
-      session: async ({ session, token }) => { if (token) session.user.id = token.id as string; return session; },
-    },
-    pages: { signIn: '/login' },
-    secret: process.env.NEXTAUTH_SECRET,
-  };
-  \`\`\`
-
-  ### .env.local template (always generate this file)
+  ### .env template (always generate this file)
   \`\`\`bash
   # Database
-  DATABASE_URL="file:./dev.db"          # Demo: SQLite. Production: replace with real URL
+  DATABASE_URL="file:./dev.db"   # Demo: SQLite. Production: replace with the real URL
 
-  # Auth
-  NEXTAUTH_URL="http://localhost:3000"
-  NEXTAUTH_SECRET=""                    # Generate: openssl rand -base64 32
+  # Sessions
+  SESSION_SECRET=""              # Generate: openssl rand -base64 32
 
-  # Add other keys here as needed
-  \`\`\`
-
-  ═══════════════════════════════════════════════════════
-  ## FastAPI — Full-Stack Scaffold
-  ═══════════════════════════════════════════════════════
-
-  ### Folder structure
-  \`\`\`
-  app/
-    main.py               ← FastAPI app, CORS, router includes
-    config.py             ← pydantic-settings BaseSettings (reads .env)
-    database.py           ← SQLAlchemy engine + session factory
-    models/               ← SQLAlchemy ORM models
-      user.py
-      post.py
-    schemas/              ← Pydantic request/response schemas
-      user.py
-      post.py
-    routers/              ← APIRouter per resource
-      auth.py
-      users.py
-      posts.py
-    dependencies.py       ← get_db, get_current_user
-    utils/
-      security.py         ← password hashing, JWT
-  .env                    ← secrets (gitignored)
-  requirements.txt
-  \`\`\`
-
-  ### config.py — reads ALL env vars via pydantic-settings
-  \`\`\`python
-  from pydantic_settings import BaseSettings
-
-  class Settings(BaseSettings):
-      DATABASE_URL: str = "sqlite+aiosqlite:///./demo.db"  # demo fallback
-      SECRET_KEY: str = "change-me-in-production"
-      ALGORITHM: str = "HS256"
-      ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-      CORS_ORIGINS: list[str] = ["http://localhost:3000"]
-
-      class Config:
-          env_file = ".env"
-
-  settings = Settings()
-  \`\`\`
-
-  ### database.py — async SQLAlchemy (works with SQLite demo + PostgreSQL production)
-  \`\`\`python
-  from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-  from sqlalchemy.orm import DeclarativeBase
-  from app.config import settings
-
-  engine = create_async_engine(settings.DATABASE_URL, echo=False)
-  AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
-
-  class Base(DeclarativeBase):
-      pass
-
-  async def get_db() -> AsyncSession:
-      async with AsyncSessionLocal() as session:
-          yield session
-  \`\`\`
-
-  ### main.py
-  \`\`\`python
-  from fastapi import FastAPI
-  from fastapi.middleware.cors import CORSMiddleware
-  from app.config import settings
-  from app.database import engine, Base
-  from app.routers import auth, users, posts
-
-  app = FastAPI(title="API", version="1.0.0")
-
-  app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS,
-      allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-  @app.on_event("startup")
-  async def startup():
-      async with engine.begin() as conn:
-          await conn.run_sync(Base.metadata.create_all)  # auto-creates tables on start
-
-  app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
-  app.include_router(users.router, prefix="/api/users", tags=["users"])
-  app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
-  \`\`\`
-
-  ### Auth router (JWT)
-  \`\`\`python
-  from fastapi import APIRouter, Depends, HTTPException, status
-  from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-  from sqlalchemy.ext.asyncio import AsyncSession
-  from jose import JWTError, jwt
-  from passlib.context import CryptContext
-  from datetime import datetime, timedelta
-  from app.config import settings
-  from app.database import get_db
-
-  router = APIRouter()
-  pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-  oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
-
-  def create_access_token(data: dict):
-      expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-      return jwt.encode({**data, "exp": expire}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-
-  async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
-      try:
-          payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-          user_id: str = payload.get("sub")
-          if user_id is None: raise HTTPException(status_code=401, detail="Invalid token")
-      except JWTError:
-          raise HTTPException(status_code=401, detail="Invalid token")
-      # fetch user from db here
-      return user_id
-
-  @router.post("/token")
-  async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-      # verify user against db
-      token = create_access_token({"sub": "user_id_here"})
-      return {"access_token": token, "token_type": "bearer"}
-  \`\`\`
-
-  ### requirements.txt (always generate this)
-  \`\`\`
-  fastapi>=0.111.0
-  uvicorn[standard]>=0.29.0
-  pydantic-settings>=2.2.0
-  sqlalchemy[asyncio]>=2.0.0
-  aiosqlite>=0.20.0          # demo SQLite driver — no credentials needed
-  asyncpg>=0.29.0            # production PostgreSQL driver
-  motor>=3.4.0               # MongoDB async driver (if MongoDB chosen)
-  python-jose[cryptography]>=3.3.0
-  passlib[bcrypt]>=1.7.4
-  python-multipart>=0.0.9
-  \`\`\`
-
-  ### .env template (always generate this)
-  \`\`\`bash
-  # Database — demo uses SQLite (no credentials needed)
-  DATABASE_URL=sqlite+aiosqlite:///./demo.db
-  # Production PostgreSQL example:
-  # DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/dbname
-  # Production MongoDB example:
-  # MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/dbname
-
-  # Auth
-  SECRET_KEY=change-me-generate-with-openssl-rand-base64-32
-  ALGORITHM=HS256
-  ACCESS_TOKEN_EXPIRE_MINUTES=30
+  # Browser-visible values must start with VITE_
   \`\`\`
 
   ═══════════════════════════════════════════════════════
@@ -370,15 +233,16 @@ export const fullstackSkill: PromptSkill = {
   ═══════════════════════════════════════════════════════
 
   1. **Always ask for variables BEFORE building** — one upfront message, never mid-build
-  2. **Never hardcode secrets** — every credential goes in \`.env\` / \`.env.local\`
-  3. **Always generate the \`.env\` file** with placeholder comments so user knows what to fill
-  4. **Always generate \`.gitignore\`** that includes \`.env\`, \`.env.local\`, \`*.db\`, \`__pycache__\`
-  5. **Demo mode = SQLite** — zero config, works in WebContainer, swap to production by editing \`.env\` only
+  2. **Never hardcode secrets** — every credential goes in \`.env\`; only \`VITE_\` values reach the browser
+  3. **Always generate the \`.env\` file** with placeholder comments so the user knows what to fill
+  4. **Always generate \`.gitignore\`** that includes \`.env\`, \`*.db\`, \`node_modules\`
+  5. **Demo mode = SQLite / lowdb** — zero config, swap to production by editing \`.env\` only
   6. **Database connections are singletons** — never open a new connection per request
-  7. **Always add Zod (Next.js) or Pydantic (FastAPI) validation** on every API input
-  8. **Always protect routes** — middleware.ts (Next.js) or Depends(get_current_user) (FastAPI)
-  9. **CORS** — always configure for FastAPI; Next.js handles it via same-origin API routes
-  10. **Passwords** — always hash with bcrypt, never store plain text
+  7. **Validate every input** with zod in the server function's \`.validator()\`
+  8. **Protect data on the server** — check the session inside every mutating server function
+  9. **Prefer server functions over REST routes** — use server routes only for external callers
+  10. **Passwords** — always hash with bcryptjs, never store plain text
+  11. **Style everything with Tailwind CSS** — forms, tables, dashboards included
 </fullstack_skill>
 `,
 };
