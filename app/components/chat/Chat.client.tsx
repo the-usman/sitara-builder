@@ -29,6 +29,8 @@ import { streamingState } from '~/lib/stores/streaming';
 import { filesToArtifacts } from '~/utils/fileUtils';
 import { supabaseConnection } from '~/lib/stores/supabase';
 
+import { ChatLoadingScreen } from './ChatLoadingScreen';
+
 const toastAnimation = cssTransition({
   enter: 'animated fadeInRight',
   exit: 'animated fadeOutRight',
@@ -41,6 +43,7 @@ export function Chat() {
 
   const {
     ready,
+    loadError,
     initialMessages,
     storeMessageHistory,
     importChat,
@@ -55,6 +58,7 @@ export function Chat() {
 
   return (
     <>
+      {!ready && <ChatLoadingScreen error={loadError} />}
       {ready && (
         <ChatImpl
           description={title}

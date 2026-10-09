@@ -126,6 +126,9 @@ export function useChatHistory() {
   const [archivedMessages, setArchivedMessages] = useState<Message[]>([]);
   const [initialMessages, setInitialMessages] = useState<Message[]>([]);
   const [ready, setReady] = useState<boolean>(false);
+
+  // Set when loading this chat failed; the chat page shows it instead of an endless loading screen.
+  const [loadError, setLoadError] = useState<string | undefined>();
   const [urlId, setUrlId] = useState<string | undefined>();
 
   /*
@@ -154,6 +157,8 @@ export function useChatHistory() {
     }
 
     if (mixedId) {
+      setLoadError(undefined);
+
       Promise.all([
         getMessages(db, mixedId),
         getSnapshot(db, mixedId), // Fetch snapshot from DB
@@ -388,7 +393,7 @@ ${value.content}
           console.error(error);
 
           logStore.logError('Failed to load chat messages or snapshot', error); // Updated error message
-          toast.error('Failed to load chat: ' + error.message); // More specific error
+          setLoadError(error instanceof Error ? error.message : String(error));
         });
     } else {
       // Handle case where there is no mixedId (e.g., new chat)
@@ -478,6 +483,7 @@ ${value.content}
 
   return {
     ready: !mixedId || ready,
+    loadError,
     initialMessages,
     justPulledFromServer,
     dismissDecodePrompt: () => setJustPulledFromServer(false),
