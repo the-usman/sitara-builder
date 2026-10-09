@@ -1,4 +1,4 @@
-import type { WebContainer } from '@webcontainer/api';
+import type { VirtualContainer } from '~/lib/webcontainer';
 import { path as nodePath } from '~/utils/path';
 import { atom, map, type MapStore } from 'nanostores';
 import type { ActionAlert, BoltAction, DeployAlert, FileHistory, SupabaseAction, SupabaseAlert } from '~/types/actions';
@@ -7,7 +7,12 @@ import { unreachable } from '~/utils/unreachable';
 import { applySearchReplace, parseSearchReplaceBlocks, SearchReplaceError } from '~/utils/search-replace';
 import type { ActionCallbackData } from './message-parser';
 import type { BoltShell } from '~/utils/shell';
-import { isRemoteSandboxEnabled, runRemoteShell, startRemoteDevServer } from '~/lib/sandbox/remote-sandbox.client';
+import {
+  buildRemoteProject,
+  isRemoteSandboxEnabled,
+  runRemoteShell,
+  startRemoteDevServer,
+} from '~/lib/sandbox/remote-sandbox.client';
 
 const logger = createScopedLogger('ActionRunner');
 
@@ -66,7 +71,7 @@ class ActionCommandError extends Error {
 }
 
 export class ActionRunner {
-  #webcontainer: Promise<WebContainer>;
+  #webcontainer: Promise<VirtualContainer>;
   #currentExecutionPromise: Promise<void> = Promise.resolve();
   #shellTerminal: () => BoltShell;
   runnerId = atom<string>(`${Date.now()}`);
@@ -77,7 +82,7 @@ export class ActionRunner {
   buildOutput?: { path: string; exitCode: number; output: string };
 
   constructor(
-    webcontainerPromise: Promise<WebContainer>,
+    webcontainerPromise: Promise<VirtualContainer>,
     getShellTerminal: () => BoltShell,
     onAlert?: (alert: ActionAlert) => void,
     onSupabaseAlert?: (alert: SupabaseAlert) => void,
@@ -253,37 +258,28 @@ export class ActionRunner {
     }
   }
 
+  /** Every command runs in the chat's Vercel Sandbox; there is no in-browser runtime any more. */
+  async #requireSandbox() {
+    if (!(await isRemoteSandboxEnabled())) {
+      throw new ActionCommandError(
+        'Previews are not configured',
+        'Commands run in a Vercel Sandbox, which is not set up on this server (VERCEL_TOKEN, VERCEL_TEAM_ID, VERCEL_PROJECT_ID).',
+      );
+    }
+  }
+
   async #runShellAction(action: ActionState) {
     if (action.type !== 'shell') {
       unreachable('Expected shell action');
     }
 
-    // Remote preview: the command runs in the chat's Vercel Sandbox, not the browser.
-    if (await isRemoteSandboxEnabled()) {
-      const resp = await runRemoteShell(action.content, this.#shellTerminal()?.terminal);
+    await this.#requireSandbox();
 
-      if (resp.exitCode !== 0) {
-        throw new ActionCommandError(`Failed To Execute Shell Command`, resp.output || 'No Output Available');
-      }
+    const resp = await runRemoteShell(action.content, this.#shellTerminal()?.terminal);
+    logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
-      return;
-    }
-
-    const shell = this.#shellTerminal();
-    await shell.ready();
-
-    if (!shell || !shell.terminal || !shell.process) {
-      unreachable('Shell terminal not found');
-    }
-
-    const resp = await shell.executeCommand(this.runnerId.get(), action.content, () => {
-      logger.debug(`[${action.type}]:Aborting Action\n\n`, action);
-      action.abort();
-    });
-    logger.debug(`${action.type} Shell Response: [exit code:${resp?.exitCode}]`);
-
-    if (resp?.exitCode != 0) {
-      throw new ActionCommandError(`Failed To Execute Shell Command`, resp?.output || 'No Output Available');
+    if (resp.exitCode !== 0) {
+      throw new ActionCommandError(`Failed To Execute Shell Command`, resp.output || 'No Output Available');
     }
   }
 
@@ -292,38 +288,16 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
-    if (!this.#shellTerminal) {
-      unreachable('Shell terminal not found');
+    await this.#requireSandbox();
+
+    const resp = await startRemoteDevServer(action.content, this.#shellTerminal()?.terminal);
+    logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
+
+    if (resp.exitCode !== 0) {
+      throw new ActionCommandError('Failed To Start Application', resp.output || 'No Output Available');
     }
 
-    if (await isRemoteSandboxEnabled()) {
-      const resp = await startRemoteDevServer(action.content, this.#shellTerminal()?.terminal);
-
-      if (resp.exitCode !== 0) {
-        throw new ActionCommandError('Failed To Start Application', resp.output || 'No Output Available');
-      }
-
-      return { exitCode: 0, output: resp.output };
-    }
-
-    const shell = this.#shellTerminal();
-    await shell.ready();
-
-    if (!shell || !shell.terminal || !shell.process) {
-      unreachable('Shell terminal not found');
-    }
-
-    const resp = await shell.executeCommand(this.runnerId.get(), action.content, () => {
-      logger.debug(`[${action.type}]:Aborting Action\n\n`, action);
-      action.abort();
-    });
-    logger.debug(`${action.type} Shell Response: [exit code:${resp?.exitCode}]`);
-
-    if (resp?.exitCode != 0) {
-      throw new ActionCommandError('Failed To Start Application', resp?.output || 'No Output Available');
-    }
-
-    return resp;
+    return { exitCode: 0, output: resp.output };
   }
 
   /** Applies SEARCH/REPLACE blocks to an existing file (see app/utils/search-replace.ts). */
@@ -458,23 +432,12 @@ ${error.failedSearch}`,
       source: 'netlify',
     });
 
-    const webcontainer = await this.#webcontainer;
+    await this.#requireSandbox();
 
-    // Create a new terminal specifically for the build
-    const buildProcess = await webcontainer.spawn('npm', ['run', 'build']);
+    // Builds in the sandbox, then downloads the output into the project files for the deploy step.
+    const { exitCode, output, dir } = await buildRemoteProject(this.#shellTerminal()?.terminal);
 
-    let output = '';
-    buildProcess.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          output += data;
-        },
-      }),
-    );
-
-    const exitCode = await buildProcess.exit;
-
-    if (exitCode !== 0) {
+    if (exitCode !== 0 || !dir) {
       // Trigger build failed alert
       this.onDeployAlert?.({
         type: 'error',
@@ -501,34 +464,10 @@ ${error.failedSearch}`,
       source: 'netlify',
     });
 
-    // Check for common build directories
-    const commonBuildDirs = ['dist', 'build', 'out', 'output', '.next', 'public'];
-
-    let buildDir = '';
-
-    // Try to find the first existing build directory
-    for (const dir of commonBuildDirs) {
-      const dirPath = nodePath.join(webcontainer.workdir, dir);
-
-      try {
-        await webcontainer.fs.readdir(dirPath);
-        buildDir = dirPath;
-        logger.debug(`Found build directory: ${buildDir}`);
-        break;
-      } catch (error) {
-        // Directory doesn't exist, try the next one
-        logger.debug(`Build directory ${dir} not found, trying next option. ${error}`);
-      }
-    }
-
-    // If no build directory was found, use the default (dist)
-    if (!buildDir) {
-      buildDir = nodePath.join(webcontainer.workdir, 'dist');
-      logger.debug(`No build directory found, defaulting to: ${buildDir}`);
-    }
+    const webcontainer = await this.#webcontainer;
 
     return {
-      path: buildDir,
+      path: nodePath.join(webcontainer.workdir, dir),
       exitCode,
       output,
     };

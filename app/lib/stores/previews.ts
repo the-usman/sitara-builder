@@ -1,4 +1,3 @@
-import type { WebContainer } from '@webcontainer/api';
 import { atom } from 'nanostores';
 
 // Extend Window interface to include our custom property
@@ -19,19 +18,15 @@ const PREVIEW_CHANNEL = 'preview-updates';
 
 export class PreviewsStore {
   #availablePreviews = new Map<number, PreviewInfo>();
-  #webcontainer: Promise<WebContainer>;
   #broadcastChannel: BroadcastChannel | null = null;
   #lastUpdate = new Map<string, number>();
-  #watchedFiles = new Set<string>();
   #refreshTimeouts = new Map<string, NodeJS.Timeout>();
   #REFRESH_DELAY = 300;
   #storageChannel: BroadcastChannel | null = null;
 
   previews = atom<PreviewInfo[]>([]);
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
-
+  constructor() {
     if (typeof BroadcastChannel !== 'undefined') {
       this.#broadcastChannel = new BroadcastChannel(PREVIEW_CHANNEL);
       this.#storageChannel = new BroadcastChannel('storage-sync-channel');
@@ -71,8 +66,6 @@ export class PreviewsStore {
         this._scheduleStorageSync();
       };
     }
-
-    this.#init();
   }
 
   // Generate a unique ID for this tab
@@ -155,106 +148,39 @@ export class PreviewsStore {
     }
   }
 
-  async #init() {
-    const webcontainer = await this.#webcontainer;
-
-    // Listen for server ready events
-    webcontainer.on('server-ready', (port, url) => {
-      console.log('[Preview] Server ready on port:', port, url);
-      this.broadcastUpdate(url);
-
-      // Initial storage sync when preview is ready
-      this._broadcastStorageSync();
-    });
-
-    try {
-      // Watch for file changes
-      webcontainer.internal.watchPaths(
-        {
-          // Only watch specific file types that affect the preview
-          include: ['**/*.html', '**/*.css', '**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx', '**/*.json'],
-          exclude: [
-            '**/node_modules/**',
-            '**/.git/**',
-            '**/dist/**',
-            '**/build/**',
-            '**/coverage/**',
-            '**/.next/**',
-            '**/.nuxt/**',
-            '**/.svelte-kit/**',
-            '**/.vite/**',
-            '**/.turbo/**',
-            '**/.cache/**',
-            '**/.parcel-cache/**',
-            '**/.vercel/**',
-          ],
-        },
-        () => this.#scheduleFileChangeBroadcast(),
-      );
-    } catch (error) {
-      console.error('[Preview] Error setting up watchers:', error);
-    }
-
-    // Listen for port events
-    webcontainer.on('port', (port, type, url) => {
-      let previewInfo = this.#availablePreviews.get(port);
-
-      if (type === 'close' && previewInfo) {
-        this.#availablePreviews.delete(port);
-        this.previews.set(this.previews.get().filter((preview) => preview.port !== port));
-
-        return;
-      }
-
-      const previews = this.previews.get();
-
-      if (!previewInfo) {
-        previewInfo = { port, ready: type === 'open', baseUrl: url };
-        this.#availablePreviews.set(port, previewInfo);
-        previews.push(previewInfo);
-      }
-
-      previewInfo.ready = type === 'open';
-      previewInfo.baseUrl = url;
-
-      this.previews.set([...previews]);
-
-      if (type === 'open') {
-        this.broadcastUpdate(url);
-      }
-    });
-  }
-
-  /*
-   * The watcher fires for every file the AI writes or npm touches. Refreshing the preview on each event meant a
-   * full page reload per file — which also defeats the dev server's hot reload. Wait until the writes go quiet
-   * and refresh once.
+  /**
+   * Previews run in a Vercel Sandbox (app/lib/sandbox); the workbench mirrors its public URL here
+   * so the preview pane can show it inline. `undefined` clears it (stopped, restarting, new chat).
    */
-  #fileChangeTimeout: NodeJS.Timeout | null = null;
-  #FILE_CHANGE_QUIET_MS = 1000;
+  setRemotePreview(url: string | undefined) {
+    const current = this.previews.get()[0];
 
-  #scheduleFileChangeBroadcast() {
-    if (this.#fileChangeTimeout) {
-      clearTimeout(this.#fileChangeTimeout);
+    if (!url) {
+      if (current) {
+        this.#availablePreviews.clear();
+        this.previews.set([]);
+      }
+
+      return;
     }
 
-    this.#fileChangeTimeout = setTimeout(() => {
-      this.#fileChangeTimeout = null;
+    if (current?.baseUrl === url) {
+      return;
+    }
 
-      for (const preview of this.previews.get()) {
-        const previewId = this.getPreviewId(preview.baseUrl);
-
-        if (previewId) {
-          this.broadcastFileChange(previewId);
-        }
-      }
-    }, this.#FILE_CHANGE_QUIET_MS);
+    const preview: PreviewInfo = { port: 443, ready: true, baseUrl: url };
+    this.#availablePreviews.clear();
+    this.#availablePreviews.set(preview.port, preview);
+    this.previews.set([preview]);
   }
 
-  // Helper to extract preview ID from URL
+  // Helper to extract preview ID from URL — sandbox previews live on their own subdomain (sb-xxxx.vercel.run).
   getPreviewId(url: string): string | null {
-    const match = url.match(/^https?:\/\/([^.]+)\.local-credentialless\.webcontainer-api\.io/);
-    return match ? match[1] : null;
+    try {
+      return new URL(url).hostname.split('.')[0] || null;
+    } catch {
+      return null;
+    }
   }
 
   // Broadcast state change to all tabs
@@ -345,11 +271,7 @@ let previewsStore: PreviewsStore | null = null;
 
 export function usePreviewStore() {
   if (!previewsStore) {
-    /*
-     * Initialize with a Promise that resolves to WebContainer
-     * This should match how you're initializing WebContainer elsewhere
-     */
-    previewsStore = new PreviewsStore(Promise.resolve({} as WebContainer));
+    previewsStore = new PreviewsStore();
   }
 
   return previewsStore;

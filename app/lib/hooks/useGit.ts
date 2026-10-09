@@ -1,4 +1,4 @@
-import type { WebContainer } from '@webcontainer/api';
+import type { VirtualContainer } from '~/lib/webcontainer';
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
 import { webcontainer as webcontainerPromise } from '~/lib/webcontainer';
 import git, { type GitAuth, type PromiseFsClient } from 'isomorphic-git';
@@ -30,7 +30,7 @@ const saveGitAuth = (url: string, auth: GitAuth) => {
 
 export function useGit() {
   const [ready, setReady] = useState(false);
-  const [webcontainer, setWebcontainer] = useState<WebContainer>();
+  const [webcontainer, setWebcontainer] = useState<VirtualContainer>();
   const [fs, setFs] = useState<PromiseFsClient>();
   const fileData = useRef<Record<string, { data: any; encoding?: string }>>({});
   useEffect(() => {
@@ -172,7 +172,7 @@ export function useGit() {
 }
 
 const getFs = (
-  webcontainer: WebContainer,
+  webcontainer: VirtualContainer,
   record: MutableRefObject<Record<string, { data: any; encoding?: string }>>,
 ) => ({
   promises: {

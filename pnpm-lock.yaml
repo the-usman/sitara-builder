@@ -173,9 +173,6 @@ importers:
       '@vercel/sandbox':
         specifier: ^3.6.1
         version: 3.6.1
-      '@webcontainer/api':
-        specifier: 1.6.1-internal.1
-        version: 1.6.1-internal.1
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -3550,9 +3547,6 @@ packages:
 
   '@web3-storage/multipart-parser@1.0.0':
     resolution: {integrity: sha512-BEO6al7BYqcnfX15W2cnGR+Q566ACXAT9UQykORCWW80lmkpWsnEob6zJS1ZVBKsSJC8+7vJkHwlp+lXG1UCdw==}
-
-  '@webcontainer/api@1.6.1-internal.1':
-    resolution: {integrity: sha512-3kIlLzJonzKlPzONuKudMWHICqwkwyXSsIoUHt4vJwjAr8/qFjlMVxq8ggHS6Yck9JBh1JllDWfCiC95ipSsxw==}
 
   '@workflow/serde@4.1.0-beta.2':
     resolution: {integrity: sha512-8kkeoQKLDaKXefjV5dbhBj2aErfKp1Mc4pb6tj8144cF+Em5SPbyMbyLCHp+BVrFfFVCBluCtMx+jjvaFVZGww==}
@@ -11842,8 +11836,6 @@ snapshots:
       tinyrainbow: 1.2.0
 
   '@web3-storage/multipart-parser@1.0.0': {}
-
-  '@webcontainer/api@1.6.1-internal.1': {}
 
   '@workflow/serde@4.1.0-beta.2': {}
 

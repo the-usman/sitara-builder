@@ -1,8 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import type { TextSearchOptions, TextSearchOnProgressCallback, WebContainer } from '@webcontainer/api';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { webcontainer } from '~/lib/webcontainer';
-import { WORK_DIR } from '~/utils/constants';
 import { debounce } from '~/utils/debounce';
 
 interface DisplayMatch {
@@ -13,64 +10,44 @@ interface DisplayMatch {
   matchCharEnd: number;
 }
 
-async function performTextSearch(
-  instance: WebContainer,
-  query: string,
-  options: Omit<TextSearchOptions, 'folders'>,
-  onProgress: (results: DisplayMatch[]) => void,
-): Promise<void> {
-  if (!instance || typeof instance.internal?.textSearch !== 'function') {
-    console.error('WebContainer instance not available or internal searchText method is missing/not a function.');
+const RESULT_LIMIT = 500;
+const SKIPPED_FILE = /(^|\/)(package-lock\.json|[^/]*\.lock)$|\/(node_modules|\.git|dist)\//;
 
-    return;
-  }
+/** Case-insensitive search over the project's text files (all of them are in memory). */
+function performTextSearch(query: string): DisplayMatch[] {
+  const needle = query.toLowerCase();
+  const matches: DisplayMatch[] = [];
 
-  const searchOptions: TextSearchOptions = {
-    ...options,
-    folders: [WORK_DIR],
-  };
-
-  const progressCallback: TextSearchOnProgressCallback = (filePath: any, apiMatches: any[]) => {
-    const displayMatches: DisplayMatch[] = [];
-
-    apiMatches.forEach((apiMatch: { preview: { text: string; matches: string | any[] }; ranges: any[] }) => {
-      const previewLines = apiMatch.preview.text.split('\n');
-
-      apiMatch.ranges.forEach((range: { startLineNumber: number; startColumn: any; endColumn: any }) => {
-        let previewLineText = '(Preview line not found)';
-        let lineIndexInPreview = -1;
-
-        if (apiMatch.preview.matches.length > 0) {
-          const previewStartLine = apiMatch.preview.matches[0].startLineNumber;
-          lineIndexInPreview = range.startLineNumber - previewStartLine;
-        }
-
-        if (lineIndexInPreview >= 0 && lineIndexInPreview < previewLines.length) {
-          previewLineText = previewLines[lineIndexInPreview];
-        } else {
-          previewLineText = previewLines[0] ?? '(Preview unavailable)';
-        }
-
-        displayMatches.push({
-          path: filePath,
-          lineNumber: range.startLineNumber,
-          previewText: previewLineText,
-          matchCharStart: range.startColumn,
-          matchCharEnd: range.endColumn,
-        });
-      });
-    });
-
-    if (displayMatches.length > 0) {
-      onProgress(displayMatches);
+  for (const [filePath, dirent] of Object.entries(workbenchStore.files.get())) {
+    if (dirent?.type !== 'file' || dirent.isBinary || SKIPPED_FILE.test(filePath)) {
+      continue;
     }
-  };
 
-  try {
-    await instance.internal.textSearch(query, searchOptions, progressCallback);
-  } catch (error) {
-    console.error('Error during internal text search:', error);
+    const lines = dirent.content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const lower = lines[i].toLowerCase();
+      let from = lower.indexOf(needle);
+
+      while (from !== -1) {
+        matches.push({
+          path: filePath,
+          lineNumber: i + 1,
+          previewText: lines[i],
+          matchCharStart: from,
+          matchCharEnd: from + needle.length,
+        });
+
+        if (matches.length >= RESULT_LIMIT) {
+          return matches;
+        }
+
+        from = lower.indexOf(needle, from + needle.length);
+      }
+    }
   }
+
+  return matches;
 }
 
 function groupResultsByFile(results: DisplayMatch[]): Record<string, DisplayMatch[]> {
@@ -126,26 +103,7 @@ export function Search() {
     const start = Date.now();
 
     try {
-      const instance = await webcontainer;
-      const options: Omit<TextSearchOptions, 'folders'> = {
-        homeDir: WORK_DIR, // Adjust this path as needed
-        includes: ['**/*.*'],
-        excludes: ['**/node_modules/**', '**/package-lock.json', '**/.git/**', '**/dist/**', '**/*.lock'],
-        gitignore: true,
-        requireGit: false,
-        globalIgnoreFiles: true,
-        ignoreSymlinks: false,
-        resultLimit: 500,
-        isRegex: false,
-        caseSensitive: false,
-        isWordMatch: false,
-      };
-
-      const progressHandler = (batchResults: DisplayMatch[]) => {
-        setSearchResults((prevResults) => [...prevResults, ...batchResults]);
-      };
-
-      await performTextSearch(instance, query, options, progressHandler);
+      setSearchResults(performTextSearch(query));
     } catch (error) {
       console.error('Failed to initiate search:', error);
     } finally {

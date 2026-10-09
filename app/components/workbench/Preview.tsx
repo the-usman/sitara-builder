@@ -6,7 +6,7 @@ import { PortDropdown } from './PortDropdown';
 import { ScreenshotSelector } from './ScreenshotSelector';
 import { expoUrlAtom } from '~/lib/stores/qrCodeStore';
 import { ExpoQrModal } from '~/components/workbench/ExpoQrModal';
-import { remotePreview, remoteSandboxAvailable } from '~/lib/sandbox/remote-sandbox.client';
+import { remotePreview, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
 import { RemotePreviewPanel } from './RemotePreviewPanel';
 
 type ResizeSide = 'left' | 'right' | null;
@@ -51,10 +51,12 @@ const WINDOW_SIZES: WindowSize[] = [
 
 export const Preview = memo(() => {
   const remoteStatus = useStore(remotePreview).status;
-  const remoteAvailable = useStore(remoteSandboxAvailable);
 
-  // With Vercel Sandbox configured the remote panel is always shown, so "Run preview" is reachable.
-  return remoteAvailable || remoteStatus !== 'idle' ? <RemotePreviewPanel /> : <BrowserPreview />;
+  /*
+   * Previews run in a Vercel Sandbox. While it starts (or is stopped / failed) the status panel
+   * with Run/Restart shows; once live, the sandbox URL is embedded below like any website.
+   */
+  return remoteStatus === 'running' ? <BrowserPreview /> : <RemotePreviewPanel />;
 });
 
 const BrowserPreview = memo(() => {
@@ -386,12 +388,10 @@ const BrowserPreview = memo(() => {
 
   const openInNewWindow = (size: WindowSize) => {
     if (activePreview?.baseUrl) {
-      const match = activePreview.baseUrl.match(/^https?:\/\/([^.]+)\.local-credentialless\.webcontainer-api\.io/);
+      // The preview is a public sandbox URL, so the new window can load it directly.
+      const previewUrl = activePreview.baseUrl;
 
-      if (match) {
-        const previewId = match[1];
-        const previewUrl = `/webcontainer/preview/${previewId}`;
-
+      if (previewUrl) {
         // Adjust dimensions for landscape mode if applicable
         let width = size.width;
         let height = size.height;
@@ -552,8 +552,6 @@ const BrowserPreview = memo(() => {
             newWindow.focus();
           }
         }
-      } else {
-        console.warn('[Preview] Invalid WebContainer URL:', activePreview.baseUrl);
       }
     }
   };
@@ -635,7 +633,12 @@ const BrowserPreview = memo(() => {
       )}
       <div className="bg-bolt-elements-background-depth-2 p-2 flex items-center gap-2">
         <div className="flex items-center gap-2">
-          <IconButton icon="i-ph:arrow-clockwise" onClick={reloadPreview} />
+          <IconButton icon="i-ph:arrow-clockwise" title="Reload page" onClick={reloadPreview} />
+          <IconButton
+            icon="i-ph:arrow-counter-clockwise"
+            title="Restart preview (reinstall and restart the dev server)"
+            onClick={() => void runRemotePreview(workbenchStore.boltTerminal.terminal)}
+          />
           <IconButton
             icon="i-ph:selection"
             onClick={() => setIsSelectionMode(!isSelectionMode)}
@@ -747,22 +750,10 @@ const BrowserPreview = memo(() => {
                             return;
                           }
 
-                          const match = activePreview.baseUrl.match(
-                            /^https?:\/\/([^.]+)\.local-credentialless\.webcontainer-api\.io/,
-                          );
-
-                          if (!match) {
-                            console.warn('[Preview] Invalid WebContainer URL:', activePreview.baseUrl);
-                            return;
-                          }
-
-                          const previewId = match[1];
-                          const previewUrl = `/webcontainer/preview/${previewId}`;
-
                           // Open in a new window with simple parameters
                           window.open(
-                            previewUrl,
-                            `preview-${previewId}`,
+                            activePreview.baseUrl,
+                            'sitara-preview',
                             'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no,resizable=yes',
                           );
                         }}

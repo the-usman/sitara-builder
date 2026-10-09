@@ -1,6 +1,7 @@
 import { type ActionFunctionArgs, type LoaderFunctionArgs, json } from '@remix-run/cloudflare';
 import { requireAuth } from '~/lib/auth.server';
 import {
+  downloadDirectory,
   getChatPreviewErrors,
   getChatSandbox,
   getManifest,
@@ -20,6 +21,7 @@ import {
  * POST { op: 'sync', chatKey, files, deleted } → { ok }
  * POST { op: 'run' | 'start', chatKey, command } → NDJSON stream of
  *      {t:'log',d} … then {t:'exit',code} (run) or {t:'url',url} (start, once the port answers).
+ * POST { op: 'download', chatKey, dirs } → { dir, files } — build output, after `npm run build`.
  * POST { op: 'manifest', chatKey } → { files: { [path]: sha1 } } — checked before each command.
  * POST { op: 'errors', chatKey } → { errors } — build/runtime errors since the last poll.
  * POST { op: 'ping', chatKey } → { running } — keep-alive; never wakes a stopped sandbox.
@@ -29,6 +31,7 @@ import {
 type SandboxRequest =
   | { op: 'sync'; chatKey: string; files?: SyncFile[]; deleted?: string[] }
   | { op: 'run' | 'start'; chatKey: string; command: string }
+  | { op: 'download'; chatKey: string; dirs: string[] }
   | { op: 'manifest' | 'errors' | 'ping' | 'stop'; chatKey: string };
 
 export async function loader({ request, context }: LoaderFunctionArgs) {
@@ -130,6 +133,13 @@ export async function action({ request, context }: ActionFunctionArgs) {
             }
           })(),
         );
+      }
+
+      case 'download': {
+        const sandbox = await getChatSandbox(env, user.userId, body.chatKey);
+        const output = await downloadDirectory(sandbox, Array.isArray(body.dirs) ? body.dirs : []);
+
+        return output ? json(output) : json({ error: 'No build output directory found.' }, { status: 404 });
       }
 
       case 'manifest': {

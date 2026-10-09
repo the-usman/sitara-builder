@@ -24,12 +24,6 @@ const host = process.env.HOST || '0.0.0.0';
 const build = await import(pathToFileURL(path.join(root, 'build', 'server', 'index.js')).href);
 const handleRequest = createRequestHandler(build, process.env.NODE_ENV || 'production');
 
-// WebContainer needs cross-origin isolation on every response (mirrors public/_headers).
-const ISOLATION_HEADERS = {
-  'Cross-Origin-Embedder-Policy': 'credentialless',
-  'Cross-Origin-Opener-Policy': 'same-origin',
-};
-
 const MIME_TYPES = {
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -101,7 +95,6 @@ async function serveStatic(req, res) {
   }
 
   res.writeHead(200, {
-    ...ISOLATION_HEADERS,
     'Content-Type': MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
     'Content-Length': info.size,
 
@@ -164,12 +157,6 @@ async function sendFetchResponse(res, response) {
 
   if (cookies.length) {
     headers['set-cookie'] = cookies;
-  }
-
-  for (const [key, value] of Object.entries(ISOLATION_HEADERS)) {
-    if (!response.headers.has(key)) {
-      headers[key] = value;
-    }
   }
 
   res.writeHead(response.status, response.statusText, headers);

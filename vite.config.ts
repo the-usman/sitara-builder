@@ -73,24 +73,6 @@ const gitInfo = getGitInfo();
 
 export default defineConfig((config) => {
   return {
-    /*
-     * WebContainer requires the page to be cross-origin isolated (needs
-     * SharedArrayBuffer). Without these, WebContainer.boot() in
-     * app/lib/webcontainer/index.ts hangs forever with no error, which shows up as
-     * chat restores getting stuck on "Creating initial files".
-     */
-    server: {
-      headers: {
-        'Cross-Origin-Embedder-Policy': 'credentialless',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-      },
-    },
-    preview: {
-      headers: {
-        'Cross-Origin-Embedder-Policy': 'credentialless',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-      },
-    },
     define: {
       __COMMIT_HASH: JSON.stringify(gitInfo.commitHash),
       __GIT_BRANCH: JSON.stringify(gitInfo.branch),

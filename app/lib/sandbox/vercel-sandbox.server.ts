@@ -561,3 +561,47 @@ export async function getChatPreviewErrors(env: ServerEnv, userId: string, chatK
 
   return getPreviewErrors(sandbox);
 }
+
+const MAX_DOWNLOAD_BYTES = 40 * 1024 * 1024;
+
+/**
+ * Returns the first of `candidates` that exists in the project, with every file under it
+ * (base64). Used after `npm run build` so deploys can read the build output.
+ */
+export async function downloadDirectory(
+  sandbox: Sandbox,
+  candidates: string[],
+): Promise<{ dir: string; files: Array<{ path: string; content: string }> } | undefined> {
+  const safe = candidates.filter((dir) => /^[\w.-]+$/.test(dir));
+
+  if (!safe.length) {
+    return undefined;
+  }
+
+  const script = `for d in ${safe.join(' ')}; do [ -d "$d" ] && { echo "@@DIR@@$d"; find "$d" -path "$d/cache" -prune -o -type f -print0 | while IFS= read -r -d '' f; do printf '%s\t' "$f"; base64 -w0 "$f"; echo; done; exit 0; }; done; exit 1`;
+  const result = await run(sandbox, script);
+
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+
+  const stdout = await result.stdout();
+
+  if (stdout.length > MAX_DOWNLOAD_BYTES * 1.4) {
+    throw new Error('Build output is too large to download (over 40 MB).');
+  }
+
+  const [header, ...lines] = stdout.split('\n');
+  const dir = header.replace('@@DIR@@', '').trim();
+  const files: Array<{ path: string; content: string }> = [];
+
+  for (const line of lines) {
+    const tab = line.indexOf('\t');
+
+    if (tab > 0) {
+      files.push({ path: CLIENT_WORKDIR + line.slice(0, tab), content: line.slice(tab + 1) });
+    }
+  }
+
+  return { dir, files };
+}

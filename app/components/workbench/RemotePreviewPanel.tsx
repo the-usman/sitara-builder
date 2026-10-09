@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from 'react';
 import { useStore } from '@nanostores/react';
 import { toast } from 'react-toastify';
-import { remotePreview, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
+import { remotePreview, remoteSandboxAvailable, runRemotePreview } from '~/lib/sandbox/remote-sandbox.client';
 import { workbenchStore } from '~/lib/stores/workbench';
 
 const STATUS_TEXT: Record<string, string> = {
@@ -23,12 +23,10 @@ function runPreview() {
   void runRemotePreview(workbenchStore.boltTerminal.terminal);
 }
 
-/*
- * Remote previews are cross-origin and the builder page is cross-origin isolated (WebContainer
- * needs COEP), so the preview opens in its own tab rather than an iframe.
- */
+/** Shown in the Preview tab until the sandbox's dev server is live (then the site is embedded). */
 export const RemotePreviewPanel = memo(() => {
   const state = useStore(remotePreview);
+  const available = useStore(remoteSandboxAvailable);
   const url = 'url' in state ? state.url : undefined;
   const openedFor = useRef<string | undefined>(undefined);
 
@@ -42,6 +40,21 @@ export const RemotePreviewPanel = memo(() => {
 
   const busy = state.status === 'syncing' || state.status === 'installing' || state.status === 'starting';
   const running = state.status === 'running';
+
+  if (available === false) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-bolt-elements-background-depth-1 p-6">
+        <div className="max-w-md flex flex-col items-center gap-3 text-center">
+          <div className="i-ph:plugs text-4xl text-bolt-elements-textSecondary" />
+          <div className="text-bolt-elements-textPrimary font-medium">Previews are not set up</div>
+          <div className="text-sm text-bolt-elements-textSecondary">
+            Projects run in a Vercel Sandbox. Ask a super admin to set VERCEL_TOKEN, VERCEL_TEAM_ID and
+            VERCEL_PROJECT_ID on the server.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full flex items-center justify-center bg-bolt-elements-background-depth-1 p-6">
@@ -99,8 +112,8 @@ export const RemotePreviewPanel = memo(() => {
         )}
 
         <div className="text-xs text-bolt-elements-textTertiary">
-          Runs in a Vercel Sandbox. Edits sync automatically and the preview tab updates live. The sandbox stops when
-          you close this chat or leave it idle.
+          Runs in a Vercel Sandbox and appears here once it's live. Edits sync automatically. The sandbox stops when you
+          close this chat or leave it idle.
         </div>
       </div>
     </div>

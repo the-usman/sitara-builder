@@ -1,14 +1,15 @@
 import { atom, type MapStore } from 'nanostores';
 import type { FileMap } from '~/lib/stores/files';
+import { webcontainer } from '~/lib/webcontainer';
 import { createScopedLogger } from '~/utils/logger';
 
 /*
  * Browser half of remote preview (server: app/lib/sandbox/vercel-sandbox.server.ts).
  *
- * When the server has Vercel Sandbox configured, shell and start actions run there instead of
- * in the WebContainer, and every file in the workbench is mirrored to the sandbox. The
- * WebContainer is still the file system behind the file tree and editor, but never runs
- * npm install or a dev server. Set localStorage `sitara-preview-mode` to `browser` to opt out.
+ * Every command (installs, the dev server, builds, terminal input) runs in the chat's Vercel
+ * Sandbox, and every file in the workbench's in-memory file system (app/lib/webcontainer) is
+ * mirrored to it. Nothing executes in the user's browser; without Vercel Sandbox configured on
+ * the server, the builder can still edit code but cannot run or preview it.
  */
 
 const logger = createScopedLogger('RemoteSandbox');
@@ -22,8 +23,8 @@ export type RemotePreviewState =
 
 export const remotePreview = atom<RemotePreviewState>({ status: 'idle' });
 
-/** True once the server confirms Vercel Sandbox is configured — the Preview tab then shows the remote panel. */
-export const remoteSandboxAvailable = atom(false);
+/** Whether the server has Vercel Sandbox configured; `undefined` until the check returns. */
+export const remoteSandboxAvailable = atom<boolean | undefined>(undefined);
 
 let enabledPromise: Promise<boolean> | undefined;
 
@@ -31,12 +32,6 @@ export function isRemoteSandboxEnabled(): Promise<boolean> {
   if (typeof window === 'undefined') {
     return Promise.resolve(false);
   }
-
-  try {
-    if (window.localStorage.getItem('sitara-preview-mode') === 'browser') {
-      return Promise.resolve(false);
-    }
-  } catch {}
 
   enabledPromise ??= fetch('/api/sandbox')
     .then((res) => (res.ok ? (res.json() as Promise<{ enabled?: boolean }>) : { enabled: false }))
@@ -233,7 +228,8 @@ export const restartRemotePreview = runRemotePreview;
 
 // ---------------------------------------------------------------- file mirroring
 
-const SKIP_PATH = /\/(node_modules|\.history|\.git)\//;
+// Build output (dist/, out/) is produced in the sandbox and downloaded for deploys; never upload it back.
+const SKIP_PATH = /\/(node_modules|\.history|\.git|dist|out)\//;
 let filesStore: MapStore<FileMap> | undefined;
 let lastSent = new Map<string, string>();
 let syncChain: Promise<void> = Promise.resolve();
@@ -460,6 +456,7 @@ async function streamCommand(
   op: 'run' | 'start',
   command: string,
   terminal: RemoteTerminal | undefined,
+  options: RemoteShellOptions = {},
 ): Promise<{ exitCode: number; output: string; url?: string }> {
   await waitForFilesToSettle();
   await flushRemoteFiles();
@@ -467,13 +464,26 @@ async function streamCommand(
   const chatKey = await sandboxKey();
   await verifyRemoteFiles(chatKey).catch((error) => logger.error('File check failed:', error));
 
-  terminal?.write(toTerminal(`\n\x1b[36m[vercel sandbox]\x1b[0m $ ${command}\n`));
+  if (options.echo !== false) {
+    terminal?.write(toTerminal(`\n\x1b[36m[vercel sandbox]\x1b[0m $ ${command}\n`));
+  }
 
-  const res = await fetch('/api/sandbox', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ op, chatKey, command }),
-  });
+  let res: Response;
+
+  try {
+    res = await fetch('/api/sandbox', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, chatKey, command }),
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (options.signal?.aborted) {
+      return { exitCode: 130, output: '' };
+    }
+
+    throw error;
+  }
 
   if (!res.ok || !res.body) {
     const message = ((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`;
@@ -487,7 +497,19 @@ async function streamCommand(
   let output = '';
 
   while (true) {
-    const { value, done } = await reader.read();
+    let chunk: ReadableStreamReadResult<string>;
+
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (options.signal?.aborted) {
+        return { exitCode: 130, output };
+      }
+
+      throw error;
+    }
+
+    const { value, done } = chunk;
 
     if (done) {
       break;
@@ -528,18 +550,31 @@ async function streamCommand(
   return { exitCode: 1, output: output || 'Connection to the sandbox closed unexpectedly.' };
 }
 
-export async function runRemoteShell(command: string, terminal?: RemoteTerminal) {
+export interface RemoteShellOptions {
+  /** Abort waiting for the command (Ctrl+C in a user terminal). */
+  signal?: AbortSignal;
+
+  /** Print the "[vercel sandbox] $ cmd" header (the user terminal already echoed the line). */
+  echo?: boolean;
+
+  /** AI shell actions drive the preview status; commands typed by the user don't. */
+  affectsPreview?: boolean;
+}
+
+export async function runRemoteShell(command: string, terminal?: RemoteTerminal, options: RemoteShellOptions = {}) {
+  const affectsPreview = options.affectsPreview ?? options.echo !== false;
   const isInstall = /\b(npm|pnpm|yarn|bun)\s+(i|install|add|ci)\b/.test(command);
   const previous = remotePreview.get();
 
-  if (isInstall || previous.status === 'idle') {
-    remotePreview.set({
-      status: isInstall ? 'installing' : 'syncing',
-      url: 'url' in previous ? previous.url : undefined,
-    });
+  if (affectsPreview && isInstall) {
+    remotePreview.set({ status: 'installing', url: 'url' in previous ? previous.url : undefined });
   }
 
-  const result = await streamCommand('run', command, terminal);
+  const result = await streamCommand('run', command, terminal, options);
+
+  if (!affectsPreview) {
+    return result;
+  }
 
   if (result.exitCode !== 0) {
     remotePreview.set({
@@ -547,7 +582,7 @@ export async function runRemoteShell(command: string, terminal?: RemoteTerminal)
       error: `\`${command}\` failed`,
       url: 'url' in previous ? previous.url : undefined,
     });
-  } else if (previous.status === 'running') {
+  } else {
     remotePreview.set(previous);
   }
 
@@ -569,4 +604,47 @@ export async function startRemoteDevServer(command: string, terminal?: RemoteTer
   }
 
   return result;
+}
+
+const BUILD_OUTPUT_DIRS = ['dist', 'out', 'build', '.next', 'public'];
+
+/**
+ * Deploy build: runs `npm run build` in the sandbox, then downloads the output directory into
+ * the in-memory file system so the Netlify/Vercel deploy code can read it as before.
+ */
+export async function buildRemoteProject(
+  terminal?: RemoteTerminal,
+): Promise<{ exitCode: number; output: string; dir?: string }> {
+  const build = await runRemoteShell('npm run build', terminal, { affectsPreview: false });
+
+  if (build.exitCode !== 0) {
+    return build;
+  }
+
+  const res = await fetch('/api/sandbox', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'download', chatKey: await sandboxKey(), dirs: BUILD_OUTPUT_DIRS }),
+  });
+
+  if (!res.ok) {
+    const message = ((await res.json().catch(() => ({}))) as { error?: string }).error || `HTTP ${res.status}`;
+    return { exitCode: 1, output: `${build.output}\n${message}` };
+  }
+
+  const { dir, files } = (await res.json()) as { dir: string; files: Array<{ path: string; content: string }> };
+  const container = await webcontainer;
+
+  await container.fs.rm(dir, { recursive: true, force: true });
+
+  for (const file of files) {
+    await container.fs.writeFile(
+      file.path,
+      Uint8Array.from(atob(file.content), (c) => c.charCodeAt(0)),
+    );
+  }
+
+  terminal?.write(toTerminal(`\nDownloaded ${files.length} build file(s) from ${dir}/\n`));
+
+  return { exitCode: 0, output: build.output, dir };
 }
