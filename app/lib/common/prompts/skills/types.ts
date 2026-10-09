@@ -32,6 +32,12 @@ export interface PromptSkill {
   /** Unconditionally load on every request, even when the router selects nothing */
   alwaysLoad?: boolean;
 
+  /**
+   * Load whenever this matches the recent user messages, even if the LLM router didn't pick the
+   * skill — for markers the app itself adds (e.g. "[Design reference attached …]").
+   */
+  forceTriggers?: RegExp;
+
   /** Full prompt section for this skill */
   body: (ctx: SkillContext) => string;
 }

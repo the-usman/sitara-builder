@@ -53,12 +53,16 @@ function messageCost(message: { content: any }): number {
     return 0;
   }
 
-  return content.reduce((sum: number, part: any) => sum + (isImagePart(part) ? IMAGE_COST_CHARS : (part?.text?.length ?? 0)), 0);
+  return content.reduce(
+    (sum: number, part: any) => sum + (isImagePart(part) ? IMAGE_COST_CHARS : (part?.text?.length ?? 0)),
+    0,
+  );
 }
 
 /**
  * Makes a message list safe to send:
- *  - images/attachments are kept only on the last user message (older ones are replaced by a note),
+ *  - images/attachments are kept only on the last user message and on the latest user message that has
+ *    any (the design reference); older ones are replaced by a note,
  *  - oversized messages are truncated in the middle,
  *  - the oldest messages are dropped until the history fits the budget (the last message is always kept,
  *    and the list always starts with a user message, as providers require).
@@ -68,6 +72,16 @@ export function limitMessages<T extends { role: string; content: any }>(
   maxChars: number = MAX_HISTORY_CHARS,
 ): T[] {
   const lastUserIndex = messages.map((m) => m.role).lastIndexOf('user');
+
+  /*
+   * Also keep the images of the most recent user message that has any: that's the design
+   * reference. Keeping only the last message's images dropped it on the very first build — the
+   * starter template adds a hidden user message after the one carrying the screenshot — and on
+   * every follow-up ("make it closer to the design").
+   */
+  const referenceIndex = messages.findLastIndex(
+    (m) => m.role === 'user' && Array.isArray(m.content) && m.content.some(isImagePart),
+  );
 
   let limited = messages.map((message, index) => {
     const isLast = index === messages.length - 1 || index === lastUserIndex;
@@ -84,7 +98,9 @@ export function limitMessages<T extends { role: string; content: any }>(
 
     const parts = content.map((part: any) => {
       if (isImagePart(part)) {
-        return index === lastUserIndex ? part : { type: 'text', text: '[image omitted from earlier message]' };
+        return index === lastUserIndex || index === referenceIndex
+          ? part
+          : { type: 'text', text: '[image omitted from earlier message]' };
       }
 
       return typeof part?.text === 'string' && part.text.length > maxText
@@ -110,7 +126,9 @@ export function limitMessages<T extends { role: string; content: any }>(
   }
 
   if (limited.length < originalCount) {
-    logger.warn(`Dropped ${originalCount - limited.length} oldest message(s) to fit the prompt budget (~${Math.round(total / 4)} tokens)`);
+    logger.warn(
+      `Dropped ${originalCount - limited.length} oldest message(s) to fit the prompt budget (~${Math.round(total / 4)} tokens)`,
+    );
   }
 
   return limited;

@@ -143,3 +143,17 @@ describe('getSystemPrompt assembly', () => {
     expect(prompt).toContain('VITE_SUPABASE_ANON_KEY=anon-key');
   });
 });
+
+describe('design reference skill', () => {
+  const note = 'build this\n\n[Design reference attached — build the website to match it as closely as possible.]';
+
+  it('loads when a reference is attached even if the router did not pick it', () => {
+    const selected = selectSkills([note], ctx, [], ['ui-ux-design']).map((s) => s.name);
+    expect(selected).toContain('design-reference');
+    expect(selected).toContain('ui-ux-design');
+  });
+
+  it('stays out of requests without a reference', () => {
+    expect(selectSkills(['make the header blue'], ctx, [], []).map((s) => s.name)).not.toContain('design-reference');
+  });
+});

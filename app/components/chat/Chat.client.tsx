@@ -30,6 +30,7 @@ import { filesToArtifacts } from '~/utils/fileUtils';
 import { supabaseConnection } from '~/lib/stores/supabase';
 
 import { ChatLoadingScreen } from './ChatLoadingScreen';
+import { describeReferences, prepareReferenceImage, type PreparedReference } from '~/utils/reference-image';
 import { pendingChatPrompt, withSelectedElementContext } from '~/lib/stores/visual-edit';
 
 const toastAnimation = cssTransition({
@@ -166,6 +167,31 @@ function toVisionImageParts(uploadedFiles: File[], imageDataList: string[]): Arr
 
     return parts;
   }, []);
+}
+
+/**
+ * Turns uploaded reference images into what the model sees: an overview plus full-detail slices
+ * for tall screenshots, and a note with sampled colors (see utils/reference-image.ts). Falls
+ * back to the original image if preparing it fails.
+ */
+async function buildVisionParts(
+  uploadedFiles: File[],
+  imageDataList: string[],
+): Promise<{ parts: Array<{ type: 'image'; image: string }>; note: string }> {
+  const parts: Array<{ type: 'image'; image: string }> = [];
+  const references: PreparedReference[] = [];
+
+  for (const part of toVisionImageParts(uploadedFiles, imageDataList)) {
+    try {
+      const prepared = await prepareReferenceImage(part.image);
+      references.push(prepared);
+      prepared.images.forEach((image) => parts.push({ type: 'image', image }));
+    } catch {
+      parts.push(part);
+    }
+  }
+
+  return { parts, note: describeReferences(references) };
 }
 
 interface ChatProps {
@@ -491,6 +517,9 @@ export const ChatImpl = memo(
 
       runAnimation();
 
+      // Reference images: overview + detail slices for tall screenshots, plus sampled colors.
+      const { parts: visionParts, note: referenceNote } = await buildVisionParts(uploadedFiles, imageDataList);
+
       if (!chatStarted) {
         setFakeLoading(true);
 
@@ -523,9 +552,9 @@ export const ChatImpl = memo(
                   content: [
                     {
                       type: 'text',
-                      text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
+                      text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}${referenceNote}`,
                     },
-                    ...toVisionImageParts(uploadedFiles, imageDataList),
+                    ...visionParts,
                   ] as any,
                 },
                 {
@@ -568,9 +597,9 @@ export const ChatImpl = memo(
             content: [
               {
                 type: 'text',
-                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
+                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}${referenceNote}`,
               },
-              ...toVisionImageParts(uploadedFiles, imageDataList),
+              ...visionParts,
             ] as any,
           },
           { body: { selectedClient: selectedClientRef.current } },
@@ -606,9 +635,9 @@ export const ChatImpl = memo(
             content: [
               {
                 type: 'text',
-                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}`,
+                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${userUpdateArtifact}${finalMessageContent}${imageFilesNote}${referenceNote}`,
               },
-              ...toVisionImageParts(uploadedFiles, imageDataList),
+              ...visionParts,
             ] as any,
           },
           { body: { selectedClient: selectedClientRef.current } },
@@ -622,9 +651,9 @@ export const ChatImpl = memo(
             content: [
               {
                 type: 'text',
-                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}`,
+                text: `[Model: ${model}]\n\n[Provider: ${provider.name}]\n\n${finalMessageContent}${imageFilesNote}${referenceNote}`,
               },
-              ...toVisionImageParts(uploadedFiles, imageDataList),
+              ...visionParts,
             ] as any,
           },
           { body: { selectedClient: selectedClientRef.current } },

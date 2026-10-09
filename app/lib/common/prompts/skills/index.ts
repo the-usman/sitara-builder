@@ -7,6 +7,7 @@ import { databaseSupabaseSkill } from './database-supabase';
 import { fullstackSkill } from './fullstack';
 import { mobileAppSkill } from './mobile-app';
 import { cavemanSkill } from './caveman';
+import { designReferenceSkill } from './design-reference';
 
 export type { PromptSkill, SkillContext } from './types';
 
@@ -23,6 +24,7 @@ export const promptSkills: PromptSkill[] = [
   fullstackSkill,
   mobileAppSkill,
   cavemanSkill,
+  designReferenceSkill,
 ];
 
 /**
@@ -54,13 +56,15 @@ export function selectSkills(
    * thousands of tokens on trivial messages like "hello" — the router already saw
    * the catalog (with runtime hints) and decided.
    */
+  const recentText = userMessages.slice(-3).join('\n').toLowerCase();
+  const forced = (skill: PromptSkill) => Boolean(skill.forceTriggers?.test(recentText));
+
   if (llmSelected) {
-    return allSkills.filter((skill) => skill.alwaysLoad || llmSelected.includes(skill.name));
+    return allSkills.filter((skill) => skill.alwaysLoad || forced(skill) || llmSelected.includes(skill.name));
   }
 
   // Fallback path (router failed): regex triggers + first-message defaults + context forces
   const isFirstMessage = userMessages.length <= 2;
-  const recentText = userMessages.slice(-3).join('\n').toLowerCase();
 
   return allSkills.filter(
     (skill) =>

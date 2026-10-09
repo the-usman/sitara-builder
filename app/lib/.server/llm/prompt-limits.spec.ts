@@ -17,6 +17,17 @@ describe('limitMessages', () => {
     expect(out[2].content[1]).toEqual(image);
   });
 
+  it('keeps the design reference when later user messages have no images (starter template flow)', () => {
+    const image = { type: 'image', image: `data:image/png;base64,${big(1000)}` };
+    const out = limitMessages([
+      { role: 'user', content: [{ type: 'text', text: 'build this site' }, image] },
+      { role: 'assistant', content: 'template imported' },
+      { role: 'user', content: 'continue with my original request' },
+    ]);
+
+    expect(out[0].content[1]).toEqual(image);
+  });
+
   it('truncates giant messages and drops oldest history to fit the budget', () => {
     const messages = Array.from({ length: 40 }, (_, i) => ({
       role: i % 2 === 0 ? 'user' : 'assistant',
