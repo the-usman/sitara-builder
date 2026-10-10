@@ -5,6 +5,7 @@ import type { ActionAlert, BoltAction, DeployAlert, FileHistory, SupabaseAction,
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import { applySearchReplace, parseSearchReplaceBlocks, SearchReplaceError } from '~/utils/search-replace';
+import { recordFailedEdit } from '~/lib/stores/failed-edits';
 import type { ActionCallbackData } from './message-parser';
 import type { BoltShell } from '~/utils/shell';
 import {
@@ -246,12 +247,15 @@ export class ActionRunner {
         return;
       }
 
-      this.onAlert?.({
-        type: 'error',
-        title: action.type === 'edit' ? 'File Edit Failed' : 'Dev Server Failed',
-        description: error.header,
-        content: error.output,
-      });
+      // Failed edits go back to the model automatically when the response ends (failed-edits.ts).
+      if (action.type !== 'edit') {
+        this.onAlert?.({
+          type: 'error',
+          title: 'Dev Server Failed',
+          description: error.header,
+          content: error.output,
+        });
+      }
 
       // re-throw the error to be caught in the promise chain
       throw error;
@@ -311,6 +315,7 @@ export class ActionRunner {
     const blocks = parseSearchReplaceBlocks(action.content);
 
     if (!blocks.length) {
+      recordFailedEdit({ filePath: relativePath, reason: 'The edit contained no SEARCH/REPLACE blocks.' });
       throw new ActionCommandError(
         `Could not edit ${relativePath}`,
         'The edit contained no SEARCH/REPLACE blocks. Rewrite the whole file with a file action instead.',
@@ -322,6 +327,7 @@ export class ActionRunner {
     try {
       current = await webcontainer.fs.readFile(relativePath, 'utf-8');
     } catch {
+      recordFailedEdit({ filePath: relativePath, reason: 'The file does not exist, so it cannot be edited.' });
       throw new ActionCommandError(
         `Could not edit ${relativePath}`,
         'The file does not exist. Create it with a full file action instead of an edit.',
@@ -337,6 +343,7 @@ export class ActionRunner {
         throw error;
       }
 
+      recordFailedEdit({ filePath: relativePath, reason: error.message, failedSearch: error.failedSearch });
       throw new ActionCommandError(
         `Could not edit ${relativePath}`,
         `${error.message} Re-read the file and retry, or rewrite the whole file with a file action.

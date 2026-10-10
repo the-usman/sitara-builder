@@ -32,6 +32,11 @@ import { supabaseConnection } from '~/lib/stores/supabase';
 import { ChatLoadingScreen } from './ChatLoadingScreen';
 import { describeReferences, prepareReferenceImage, type PreparedReference } from '~/utils/reference-image';
 import { pendingChatPrompt, withSelectedElementContext } from '~/lib/stores/visual-edit';
+import { buildEditRetryMessage, EDIT_RETRY_MARKER, failedEdits } from '~/lib/stores/failed-edits';
+import { WORK_DIR } from '~/utils/constants';
+
+// Automatic "your edit didn't apply" round-trips per user message (see failed-edits.ts).
+const MAX_EDIT_RETRIES = 2;
 
 const toastAnimation = cssTransition({
   enter: 'animated fadeInRight',
@@ -229,12 +234,17 @@ export const ChatImpl = memo(
     const [clients, setClients] = useState<{ _id: string; clientName: string; productName: string }[]>([]);
     const [selectedClientId, setSelectedClientId] = useState('');
     const [clientsLoading, setClientsLoading] = useState(false);
+
     // Ref stores the confirmed client synchronously — React state batching makes useChat body stale
     const selectedClientRef = useRef<{ _id: string; clientName: string; productName: string } | null>(null);
-    // Pre-generated ID for a brand-new chat's first user message — created the moment it's first
-    // needed (e.g. an enhance click before any message exists) and reused as that message's real
-    // `id` when it's actually sent, so cost tracking (trackingId) is consistent from the start.
+
+    /*
+     * Pre-generated ID for a brand-new chat's first user message — created the moment it's first
+     * needed (e.g. an enhance click before any message exists) and reused as that message's real
+     * `id` when it's actually sent, so cost tracking (trackingId) is consistent from the start.
+     */
     const pendingMessageIdRef = useRef<string | null>(null);
+
     // Guard: prevents modal re-triggering when description prop hasn't re-rendered yet
     const chatConfiguredRef = useRef(false);
     const files = useStore(workbenchStore.files);
@@ -345,7 +355,9 @@ export const ChatImpl = memo(
       initialInput: Cookies.get(PROMPT_COOKIE_KEY) || '',
     });
     useEffect(() => {
-      if (!chatData) return;
+      if (!chatData) {
+        return;
+      }
 
       for (const item of chatData as any[]) {
         if (item?.type === 'error' && item?.error) {
@@ -428,6 +440,7 @@ export const ChatImpl = memo(
     const abort = () => {
       stop();
       chatStore.setKey('aborted', true);
+      failedEdits.set([]);
       workbenchStore.abortAllActions();
 
       logStore.logProvider('Chat response aborted', {
@@ -479,6 +492,57 @@ export const ChatImpl = memo(
       [setInput],
     );
 
+    /*
+     * Edits the model wrote but that could not be applied (SEARCH text not in the file) go straight
+     * back to it once the response ends, with the files' current content — at most twice in a row,
+     * so a model that keeps missing can't loop forever. A short delay lets queued actions finish.
+     */
+    const editRetriesRef = useRef(0);
+    const sendMessageRef = useRef<(event: React.UIEvent, messageInput?: string) => Promise<void>>();
+    const pendingFailedEdits = useStore(failedEdits);
+
+    // Only edits from a response that ran now count — not ones replayed when an old chat opens.
+    const responseRanRef = useRef(false);
+
+    useEffect(() => {
+      if (isLoading || fakeLoading) {
+        responseRanRef.current = true;
+        return undefined;
+      }
+
+      if (!responseRanRef.current || !pendingFailedEdits.length || chatStore.get().aborted) {
+        return undefined;
+      }
+
+      const timer = setTimeout(() => {
+        const edits = failedEdits.get();
+
+        if (!edits.length) {
+          return;
+        }
+
+        responseRanRef.current = false;
+
+        if (editRetriesRef.current >= MAX_EDIT_RETRIES) {
+          failedEdits.set([]);
+          toast.error(
+            `Some edits still couldn't be applied (${[...new Set(edits.map((e) => e.filePath))].join(', ')}). Describe the change again to retry.`,
+          );
+
+          return;
+        }
+
+        editRetriesRef.current += 1;
+        toast.info("Some edits didn't apply — sending them back to the AI to fix.");
+        sendMessageRef.current?.(
+          {} as React.UIEvent,
+          buildEditRetryMessage(edits, workbenchStore.files.get(), WORK_DIR),
+        );
+      }, 1500);
+
+      return () => clearTimeout(timer);
+    }, [isLoading, fakeLoading, pendingFailedEdits]);
+
     const sendMessage = async (_event: React.UIEvent, messageInput?: string) => {
       const messageContent = messageInput || input;
 
@@ -503,11 +567,23 @@ export const ChatImpl = memo(
           .then((data: any) => setClients(data.clients || []))
           .catch(() => setClients([]))
           .finally(() => setClientsLoading(false));
+
         return;
       }
 
+      const isEditRetry = messageContent.startsWith(EDIT_RETRY_MARKER);
+
+      // Edits that failed in the previous response are either being retried now or superseded.
+      failedEdits.set([]);
+
+      if (!isEditRetry) {
+        editRetriesRef.current = 0;
+      }
+
       // A section picked in the preview rides along so the model knows what "this" means.
-      const finalMessageContent = withSelectedElementContext(messageContent, workbenchStore.files.get());
+      const finalMessageContent = isEditRetry
+        ? messageContent
+        : withSelectedElementContext(messageContent, workbenchStore.files.get());
 
       const savedAssetPaths = uploadedFiles.filter(isSavedProjectAsset).map((f) => `public/${f.name}`);
       const imageFilesNote =
@@ -545,8 +621,10 @@ export const ChatImpl = memo(
               const { assistantMessage, userMessage } = temResp;
               setMessages([
                 {
-                  // Reuse the pending ID if the enhancer already generated one, so tracked cost
-                  // (see project-tracker.server.ts) lands on the same record as this message.
+                  /*
+                   * Reuse the pending ID if the enhancer already generated one, so tracked cost
+                   * (see project-tracker.server.ts) lands on the same record as this message.
+                   */
                   id: pendingMessageIdRef.current ?? generateId(),
                   role: 'user',
                   content: [
@@ -590,8 +668,10 @@ export const ChatImpl = memo(
         // If autoSelectTemplate is disabled or template selection failed, proceed with normal message
         append(
           {
-            // Reuse the pending ID if the enhancer already generated one, so tracked cost
-            // (see project-tracker.server.ts) lands on the same record as this message.
+            /*
+             * Reuse the pending ID if the enhancer already generated one, so tracked cost
+             * (see project-tracker.server.ts) lands on the same record as this message.
+             */
             id: pendingMessageIdRef.current ?? generateId(),
             role: 'user',
             content: [
@@ -730,6 +810,8 @@ export const ChatImpl = memo(
       }
     };
 
+    sendMessageRef.current = sendMessage;
+
     return (
       <>
         {/* New chat modal — client selection + name, required before first message */}
@@ -781,8 +863,13 @@ export const ChatImpl = memo(
                   value={chatNameInput}
                   onChange={(e) => setChatNameInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') confirmChatName();
-                    if (e.key === 'Escape') setShowNameModal(false);
+                    if (e.key === 'Enter') {
+                      confirmChatName();
+                    }
+
+                    if (e.key === 'Escape') {
+                      setShowNameModal(false);
+                    }
                   }}
                   placeholder="e.g. Landing page redesign"
                   className="w-full px-4 py-3 bg-white/[0.05] border border-white/[0.1] rounded-xl text-white placeholder-gray-500 text-sm focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-colors"
@@ -851,16 +938,21 @@ export const ChatImpl = memo(
               content: parsedMessages[i] || '',
             };
           })}
-          enhancePrompt={() => {
+          enhancePrompt={async () => {
             const existingTrackingId = messages.find((m) => m.role === 'user')?.id;
 
-            // No message sent yet in this chat — reuse (or create) the pending ID so the
-            // refine's cost lands on the same trackingId the first message will get.
+            /*
+             * No message sent yet in this chat — reuse (or create) the pending ID so the
+             * refine's cost lands on the same trackingId the first message will get.
+             */
             if (!existingTrackingId && !pendingMessageIdRef.current) {
               pendingMessageIdRef.current = generateId();
             }
 
-            enhancePrompt(
+            // The refiner sees the same prepared reference images the generator will get.
+            const { parts: referenceParts, note: referenceNote } = await buildVisionParts(uploadedFiles, imageDataList);
+
+            await enhancePrompt(
               input,
               (input) => {
                 setInput(input);
@@ -874,6 +966,8 @@ export const ChatImpl = memo(
                 hasExistingSite: messages.length > 0,
                 chatId: currentChatId,
                 selectedClient: selectedClientRef.current,
+                images: referenceParts.map((part) => part.image),
+                referenceNote,
               },
             );
           }}

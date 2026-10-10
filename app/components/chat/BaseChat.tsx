@@ -768,7 +768,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
 
                         <IconButton
                           title="Enhance prompt"
-                          disabled={input.length === 0 || enhancingPrompt}
+                          disabled={(input.length === 0 && !imageDataList?.some(Boolean)) || enhancingPrompt}
                           className={classNames('transition-all', enhancingPrompt ? 'opacity-100' : '')}
                           onClick={() => {
                             enhancePrompt?.();

@@ -54,6 +54,10 @@ export function usePromptEnhancer() {
       hasExistingSite?: boolean;
       chatId?: string;
       selectedClient?: EnhancerClient | null;
+
+      // Reference images attached to the prompt, so the refiner can describe what they show.
+      images?: string[];
+      referenceNote?: string;
     },
   ) => {
     setEnhancingPrompt(true);
@@ -67,6 +71,8 @@ export function usePromptEnhancer() {
       trackingId: chatContext?.trackingId,
       chatId: chatContext?.chatId,
       selectedClient: chatContext?.selectedClient ?? undefined,
+      images: chatContext?.images?.length ? chatContext.images : undefined,
+      referenceNote: chatContext?.referenceNote || undefined,
     };
 
     if (apiKeys) {

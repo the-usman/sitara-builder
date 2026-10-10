@@ -16,7 +16,14 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
 
   /* ---------------- error reporting ---------------- */
   var sent = 0;
+  /*
+   * React 19 reports hydration mismatches through window.reportError, so they arrive here as
+   * "Uncaught Error" — but React recovers by re-rendering on the client and the page works.
+   * Not a crash: don't raise a preview error for them.
+   */
+  var RECOVERABLE = /Hydration failed|hydrat(ed|ion).*(didn't|did not) match|There was an error while hydrating|Minified React error #(418|423|425)\b/i;
   function report(d) {
+    if (RECOVERABLE.test(d.message || '')) return;
     if (sent++ > 20) return;
     d.url = location.href;
     try { navigator.sendBeacon('/__sitara/error', JSON.stringify(d)); } catch (e) {}

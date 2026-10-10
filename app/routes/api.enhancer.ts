@@ -18,27 +18,56 @@ export async function action(args: ActionFunctionArgs) {
 
 const logger = createScopedLogger('api.enhancher');
 
-// Matches the mandatory `Unsplash query: "..."` form the refiner's system prompt requires
-// for every image reference — see prompt-refiner.ts IMAGE STRATEGY.
+/*
+ * Matches the mandatory `Unsplash query: "..."` form the refiner's system prompt requires
+ * for every image reference — see prompt-refiner.ts IMAGE STRATEGY.
+ */
 const IMAGE_QUERY_PATTERN = /Unsplash query:\s*"([^"]{3,200})"/gi;
+
+// Overview + slices of one tall screenshot is up to 7 images (see reference-image.ts).
+const MAX_REFERENCE_IMAGES = 8;
+
+/*
+ * The images also go to the generator with the final message, so the refined prompt doesn't
+ * have to replace them — it has to read them: turn what's visible into concrete, checkable
+ * instructions, and keep the generator pointed at the images as the source of truth.
+ */
+const REFERENCE_IMAGE_INSTRUCTIONS = stripIndents`
+  REFERENCE IMAGES ARE ATTACHED (screenshots or designs the user wants this site to follow). They outrank your own aesthetic direction:
+  - Study them before writing anything. Base the layout, section order, color palette, typography, spacing density, corner radii, shadows, and imagery style on what you SEE, not on the industry defaults in your instructions. Do not invent a different "brand reference" when the images already define the look.
+  - Describe every visible section top to bottom: its layout (columns, alignment, image placement), its content (headings, copy, buttons, cards, counts), and its notable styling. Copy visible text verbatim where readable.
+  - Give concrete values: hex colors (prefer the sampled colors listed below), font character (serif/sans, weight, approximate sizes), spacing (tight/airy, approximate px), border radius, button styles.
+  - If the user asks for changes relative to the reference, apply them and say exactly what differs from the reference.
+  - For photos visible in the reference, write an Unsplash query that matches that photo's subject, framing, and mood.
+  - Include a line telling the generator: "Match the attached reference images closely — they are the source of truth for layout and styling."
+`;
 
 function extractImageQueries(text: string): string[] {
   return Array.from(text.matchAll(IMAGE_QUERY_PATTERN), (m) => m[1].trim());
 }
 
 async function enhancerAction({ context, request }: ActionFunctionArgs) {
-  const { message, model, provider, hasExistingSite, trackingId, chatId, selectedClient } = await request.json<{
-    message: string;
-    model: string;
-    provider: ProviderInfo;
-    apiKeys?: Record<string, string>;
-    // whether a site already exists in this chat — lets the refiner choose BUILD vs EDIT mode
-    hasExistingSite?: boolean;
-    // first user message ID of the chat this refine belongs to, for cost tracking (see api.chat.ts)
-    trackingId?: string;
-    chatId?: string;
-    selectedClient?: ChatClient;
-  }>();
+  const { message, model, provider, hasExistingSite, trackingId, chatId, selectedClient, images, referenceNote } =
+    await request.json<{
+      message: string;
+
+      // reference images attached to the prompt (data URLs, already sliced/resized by the client)
+      images?: string[];
+
+      // the client's description of those images (sizes, slices, sampled colors) — see reference-image.ts
+      referenceNote?: string;
+      model: string;
+      provider: ProviderInfo;
+      apiKeys?: Record<string, string>;
+
+      // whether a site already exists in this chat — lets the refiner choose BUILD vs EDIT mode
+      hasExistingSite?: boolean;
+
+      // first user message ID of the chat this refine belongs to, for cost tracking (see api.chat.ts)
+      trackingId?: string;
+      chatId?: string;
+      selectedClient?: ChatClient;
+    }>();
 
   const { name: providerName } = provider;
 
@@ -66,25 +95,34 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
   // LLM keys come from the super-admin-managed config only — see api.chat.ts for why.
   const { apiKeys } = await readAppConfig(env);
 
+  const referenceImages = (Array.isArray(images) ? images : [])
+    .filter((image) => typeof image === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(image))
+    .slice(0, MAX_REFERENCE_IMAGES);
+
+  const promptText =
+    `[Model: ${model}]\n\n[Provider: ${providerName}]\n\n` +
+    stripIndents`
+    ${hasExistingSite ? 'A site already exists in this conversation, so lean EDIT MODE unless the request clearly asks for something brand new.' : 'No site exists yet in this conversation, so this is BUILD MODE.'}
+
+    Refine the raw request wrapped in \`<original_prompt>\` tags into the structured generation prompt described in your system instructions.
+
+    IMPORTANT: Your response must ONLY contain the refined prompt text, formatted exactly per the output format for the mode you determine applies.
+    Do not include any explanations, metadata, or wrapper tags outside that format.
+
+    <original_prompt>
+      ${message}
+    </original_prompt>
+  ` +
+    (referenceImages.length ? `\n\n${REFERENCE_IMAGE_INSTRUCTIONS}${referenceNote ? `\n\n${referenceNote}` : ''}` : '');
+
   try {
     const result = await streamText({
       messages: [
         {
           role: 'user',
-          content:
-            `[Model: ${model}]\n\n[Provider: ${providerName}]\n\n` +
-            stripIndents`
-            ${hasExistingSite ? 'A site already exists in this conversation, so lean EDIT MODE unless the request clearly asks for something brand new.' : 'No site exists yet in this conversation, so this is BUILD MODE.'}
-
-            Refine the raw request wrapped in \`<original_prompt>\` tags into the structured generation prompt described in your system instructions.
-
-            IMPORTANT: Your response must ONLY contain the refined prompt text, formatted exactly per the output format for the mode you determine applies.
-            Do not include any explanations, metadata, or wrapper tags outside that format.
-
-            <original_prompt>
-              ${message}
-            </original_prompt>
-          `,
+          content: (referenceImages.length
+            ? [{ type: 'text', text: promptText }, ...referenceImages.map((image) => ({ type: 'image', image }))]
+            : promptText) as any,
         },
       ],
       env: context.cloudflare?.env as any,
