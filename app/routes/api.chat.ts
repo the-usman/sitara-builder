@@ -16,6 +16,9 @@ import { readAppConfig } from '~/lib/config/app-config.server';
 import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
 import { computeCost } from '~/lib/.server/llm/model-pricing';
 import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
+import { hasLeakedToolCall, stripLeakedToolCall, TOOL_CALL_RETRY_PROMPT } from '~/utils/leaked-tool-call';
+
+const MAX_TOOL_CALL_RETRIES = 2;
 
 export async function action(args: ActionFunctionArgs) {
   return chatAction(args);
@@ -215,6 +218,8 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
           // logger.debug('Code Files Selected');
         }
 
+        let toolCallRetries = 0;
+
         const options: StreamingOptions = {
           supabaseConnection: supabase,
           toolChoice: 'none',
@@ -227,7 +232,15 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               cumulativeUsage.totalTokens += usage.totalTokens || 0;
             }
 
-            if (finishReason !== 'length') {
+            /*
+             * A tool-trained model sometimes writes its native tool-call tokens instead of the
+             * <boltArtifact> XML (see utils/leaked-tool-call.ts) and the reply ends with nothing
+             * built. Treat that like a cut-off reply and ask for the XML — at most twice.
+             */
+            const leakedToolCall =
+              (finishReason === 'tool-calls' || hasLeakedToolCall(content)) && toolCallRetries < MAX_TOOL_CALL_RETRIES;
+
+            if (finishReason !== 'length' && !leakedToolCall) {
               const lastUserMsg = messages.filter((x) => x.role === 'user').slice(-1)[0];
               const { model: usageModel, provider: usageProvider } = extractPropertiesFromMessage(lastUserMsg);
               // OpenRouter/Together expose live per-token pricing; first-party
@@ -332,15 +345,28 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
 
             const switchesLeft = MAX_RESPONSE_SEGMENTS - stream.switches;
 
-            logger.info(`Reached max token limit (${MAX_TOKENS}): Continuing message (${switchesLeft} switches left)`);
+            if (leakedToolCall) {
+              toolCallRetries++;
+              logger.warn(
+                `Model emitted a tool call instead of <boltArtifact>; asking it to continue (retry ${toolCallRetries})`,
+              );
+            } else {
+              logger.info(
+                `Reached max token limit (${MAX_TOKENS}): Continuing message (${switchesLeft} switches left)`,
+              );
+            }
 
             const lastUserMessage = messages.filter((x) => x.role == 'user').slice(-1)[0];
             const { model, provider } = extractPropertiesFromMessage(lastUserMessage);
-            messages.push({ id: generateId(), role: 'assistant', content });
+            messages.push({
+              id: generateId(),
+              role: 'assistant',
+              content: leakedToolCall ? stripLeakedToolCall(content) : content,
+            });
             messages.push({
               id: generateId(),
               role: 'user',
-              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${CONTINUE_PROMPT}`,
+              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${leakedToolCall ? TOOL_CALL_RETRY_PROMPT : CONTINUE_PROMPT}`,
             });
 
             const result = await streamText({

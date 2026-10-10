@@ -36,3 +36,15 @@ export const EDIT_ACTION_INSTRUCTIONS = `
   - If an edit fails ("File Edit Failed"), rewrite that whole file with a file action.
 </partial_file_edits>
 `;
+
+/*
+ * Tool-trained models (e.g. Kimi via TokenGo) sometimes "call" <boltArtifact> as a function and
+ * produce nothing (see utils/leaked-tool-call.ts). Appended to every system prompt.
+ */
+export const NO_TOOL_CALLS_INSTRUCTION = `
+<output_format>
+  There are NO tools or function calls in this environment. <boltArtifact> and <boltAction> are plain-text
+  XML tags that you write directly inside your reply message. Never emit them as a tool call, function
+  call or JSON — always write the XML itself.
+</output_format>
+`;

@@ -46,11 +46,11 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
   var mode = 'off';
   var editing = null;
   var hoverBox = null;
-  var selectBox = null;
   var ACCENT = '#8b5cf6';
 
   function post(msg) {
-    msg.source = 'sitara-preview';
+    // Own field: "source" is the element's code location and must not be overwritten.
+    msg.from = 'sitara-preview';
     try { window.parent.postMessage(msg, '*'); } catch (e) {}
   }
 
@@ -68,10 +68,29 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
    * server component — and the AI then edits the wrong file. null lets the builder locate the
    * element by its text instead.
    */
+  var STACK_FRAME = /(?:https?:\/\/[^\/\s]+)?(\/(?:src|app|components|pages|lib)\/[^?\s):]+\.(?:tsx|jsx|ts|js))(?:\?[^\s):]*)?:(\d+):(\d+)/;
+
   function sourceOf(el) {
-    var s = (fiberOf(el) || {})._debugSource;
+    var fiber = fiberOf(el) || {};
+    var s = fiber._debugSource;
     if (s && s.fileName && s.fileName.indexOf('node_modules') === -1) {
       return { file: s.fileName, line: s.lineNumber, column: s.columnNumber };
+    }
+
+    /*
+     * React 19 (TanStack Start) dropped _debugSource, but keeps the stack where the element was
+     * created. Its first frame inside the project names the component's file; the line number
+     * refers to the dev server's transformed code, so it is only a hint (approx) — the builder
+     * finds the exact lines by the element's text within that file.
+     */
+    var stack = fiber._debugStack && fiber._debugStack.stack;
+    if (typeof stack === 'string') {
+      var lines = stack.split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].indexOf('node_modules') !== -1) continue;
+        var m = lines[i].match(STACK_FRAME);
+        if (m) return { file: m[1].replace(/^\//, ''), line: Number(m[2]), approx: true };
+      }
     }
     return null;
   }
@@ -106,7 +125,51 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
   function shortFile(src) {
     if (!src) return '';
     var parts = src.file.split('/');
-    return parts.slice(-2).join('/') + ':' + src.line;
+    return parts.slice(-2).join('/') + (src.approx ? '' : ':' + src.line);
+  }
+
+  /* Multi-select: each selection keeps its own numbered box, re-placed on scroll/resize. */
+  var selections = [];
+  var nextSelectionId = 1;
+
+  function placeSelections() {
+    for (var i = 0; i < selections.length; i++) {
+      var s = selections[i];
+      if (mode === 'off' || !document.documentElement.contains(s.el)) { hide(s.box); continue; }
+      place(s.box, s.el, '#' + (i + 1) + ' · ' + describe(s.el) + '  ' + shortFile(s.source));
+    }
+  }
+
+  function removeSelection(id) {
+    selections = selections.filter(function (s) {
+      if (s.id !== id) return true;
+      s.box.remove();
+      return false;
+    });
+    placeSelections();
+  }
+
+  function toggleSelection(el) {
+    for (var i = 0; i < selections.length; i++) {
+      if (selections[i].el === el) {
+        var id = selections[i].id;
+        removeSelection(id);
+        post({ type: 'deselected', id: id });
+        return;
+      }
+    }
+    var source = sourceOf(el);
+    var selection = { id: nextSelectionId++, el: el, source: source, box: makeBox(false) };
+    selections.push(selection);
+    placeSelections();
+    post({
+      type: 'selected',
+      id: selection.id,
+      source: source,
+      tag: el.tagName.toLowerCase(),
+      text: (el.innerText || '').slice(0, 400),
+      html: el.outerHTML.slice(0, 1500),
+    });
   }
 
   function describe(el) {
@@ -187,17 +250,7 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
       return;
     }
 
-    var el = e.target;
-    var src = sourceOf(el);
-    selectBox = selectBox || makeBox(false);
-    place(selectBox, el, 'Selected · ' + describe(el) + '  ' + shortFile(src));
-    post({
-      type: 'selected',
-      source: src,
-      tag: el.tagName.toLowerCase(),
-      text: (el.innerText || '').slice(0, 400),
-      html: el.outerHTML.slice(0, 1500),
-    });
+    toggleSelection(e.target);
   }
 
   function onKey(e) {
@@ -215,7 +268,14 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
   document.addEventListener('focusout', function (e) {
     if (editing && e.target === editing.el) finishEdit(true);
   }, true);
-  window.addEventListener('scroll', function () { hide(hoverBox); hide(selectBox); }, true);
+  var placing = false;
+  function schedulePlaceSelections() {
+    if (placing) return;
+    placing = true;
+    requestAnimationFrame(function () { placing = false; placeSelections(); });
+  }
+  window.addEventListener('scroll', function () { hide(hoverBox); schedulePlaceSelections(); }, true);
+  window.addEventListener('resize', schedulePlaceSelections);
 
   window.addEventListener('message', function (e) {
     if (e.source !== window.parent || !e.data || typeof e.data.type !== 'string') return;
@@ -224,9 +284,12 @@ export const PREVIEW_BRIDGE_SCRIPT = String.raw`
       mode = e.data.mode;
       document.documentElement.style.cursor = mode === 'off' ? '' : mode === 'text' ? 'text' : 'crosshair';
       hide(hoverBox);
-      if (mode === 'off') hide(selectBox);
+      placeSelections();
     } else if (e.data.type === 'sitara:clear-selection') {
-      hide(selectBox);
+      selections.forEach(function (s) { s.box.remove(); });
+      selections = [];
+    } else if (e.data.type === 'sitara:remove-selection') {
+      removeSelection(e.data.id);
     }
   });
 

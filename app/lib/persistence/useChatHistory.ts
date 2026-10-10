@@ -22,7 +22,13 @@ import {
 import type { FileMap } from '~/lib/stores/files';
 import type { Snapshot } from './types';
 import { cancelPendingPush, deriveTrackingId, pullChat, pushChat, schedulePush } from './chat-sync.client';
-import { cancelPendingGithubPush, getLastUserPrompt, pushToGithub, scheduleGithubPush } from './github-sync.client';
+import {
+  cancelPendingGithubPush,
+  getLastUserPrompt,
+  pushToGithub,
+  scheduleGithubPush,
+  type GithubPushResult,
+} from './github-sync.client';
 import { webcontainer } from '~/lib/webcontainer';
 import { writeSnapshotToContainer } from './snapshotFiles.client';
 import { detectProjectCommands, createCommandActionsString } from '~/utils/projectCommands';
@@ -62,6 +68,57 @@ export const chatMetadata = atom<IChatMetadata | undefined>(undefined);
  * pushed to the server either. That's what made it vanish on reload with no server copy
  * to fall back to. Call this right after any such write so both copies stay current.
  */
+/**
+ * The header's "Sync Files" button: pushes the current files to the chat's GitHub repo right now
+ * (creating and linking the repo on first use, like the automatic push after each reply), and
+ * keeps the local snapshot current. Does not upload the file blob to the database.
+ */
+export async function syncFilesToGithub(): Promise<GithubPushResult> {
+  const id = chatId.get();
+
+  if (!id || !db) {
+    return { ok: false, error: 'Open a chat first' };
+  }
+
+  const stored = await getMessages(db, id).catch(() => undefined);
+  const messages = stored?.messages ?? [];
+  const trackingId = deriveTrackingId(messages);
+
+  if (!trackingId) {
+    return { ok: false, error: 'Send a message first so the project has something to push' };
+  }
+
+  const files = workbenchStore.files.get();
+  const metadata = stored?.metadata ?? chatMetadata.get();
+
+  await setSnapshot(
+    db,
+    id,
+    { chatIndex: messages.at(-1)?.id ?? '', files },
+    { recordHistory: !metadata?.githubUrl },
+  ).catch((error) => console.error('Failed to save file snapshot locally:', error));
+
+  cancelPendingGithubPush(trackingId);
+
+  const result = await pushToGithub({ trackingId, files, userPrompt: getLastUserPrompt(messages), clientChatId: id });
+
+  if (result.ok && result.repoUrl && !metadata?.githubUrl) {
+    const nextMetadata = { ...(metadata || {}), githubUrl: result.repoUrl } as IChatMetadata;
+    chatMetadata.set(nextMetadata);
+    await setMessages(
+      db,
+      id,
+      messages,
+      stored?.urlId,
+      stored?.description ?? description.get(),
+      undefined,
+      nextMetadata,
+    );
+  }
+
+  return result;
+}
+
 export async function persistFileSnapshot(): Promise<boolean> {
   const id = chatId.get();
 

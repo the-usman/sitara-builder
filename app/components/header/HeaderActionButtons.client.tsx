@@ -12,7 +12,7 @@ import { NetlifyDeploymentLink } from '~/components/chat/NetlifyDeploymentLink.c
 import { VercelDeploymentLink } from '~/components/chat/VercelDeploymentLink.client';
 import { useVercelDeploy } from '~/components/deploy/VercelDeploy.client';
 import { useNetlifyDeploy } from '~/components/deploy/NetlifyDeploy.client';
-import { chatId, persistFileSnapshot } from '~/lib/persistence/useChatHistory';
+import { chatId, syncFilesToGithub } from '~/lib/persistence/useChatHistory';
 
 interface HeaderActionButtonsProps {}
 
@@ -72,11 +72,9 @@ export function HeaderActionButtons({}: HeaderActionButtonsProps) {
   };
 
   /*
-   * persistFileSnapshot() already gzips the current WebContainer files and pushes
-   * them to /api/chat-sync (updating `filesGzip` in Mongo) — this just gives that
-   * existing flow a manual trigger with feedback tied to the click, instead of
-   * waiting on the debounced auto-sync. Failures are already toasted/logged inside
-   * pushChat (see chat-sync.client.ts), so only the success case needs a toast here.
+   * Pushes the current files to the chat's GitHub repo now (creating and linking it on first
+   * use) instead of waiting for the automatic push after the next reply. Files go to GitHub,
+   * not the database.
    */
   const onSyncSnapshot = async () => {
     /*
@@ -91,10 +89,12 @@ export function HeaderActionButtons({}: HeaderActionButtonsProps) {
     setIsSyncingSnapshot(true);
 
     try {
-      const ok = await persistFileSnapshot();
+      const result = await syncFilesToGithub();
 
-      if (ok) {
-        toast.success('Files synced to the cloud');
+      if (result.ok) {
+        toast.success(result.repoUrl ? `Files pushed to GitHub: ${result.repoUrl}` : 'Files pushed to GitHub');
+      } else {
+        toast.error(`GitHub sync failed: ${result.error ?? 'unknown error'}`);
       }
     } finally {
       setIsSyncingSnapshot(false);
@@ -185,9 +185,9 @@ export function HeaderActionButtons({}: HeaderActionButtonsProps) {
           disabled={!currentChatId || isSyncingSnapshot}
           onClick={onSyncSnapshot}
           className="px-3 flex items-center gap-2"
-          title="Push current files to the cloud now"
+          title="Push the current files to this chat's GitHub repository now"
         >
-          <div className={classNames('i-ph:cloud-arrow-up text-sm', isSyncingSnapshot ? 'animate-pulse' : '')} />
+          <div className={classNames('i-ph:github-logo text-sm', isSyncingSnapshot ? 'animate-pulse' : '')} />
           <span className="text-sm">{isSyncingSnapshot ? 'Syncing…' : 'Sync Files'}</span>
         </Button>
       </div>

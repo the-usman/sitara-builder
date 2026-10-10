@@ -266,6 +266,9 @@ importers:
       path-browserify:
         specifier: ^1.0.1
         version: 1.0.1
+      playwright-core:
+        specifier: ^1.64.0
+        version: 1.64.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -6513,6 +6516,11 @@ packages:
 
   pkg-types@2.1.0:
     resolution: {integrity: sha512-wmJwA+8ihJixSoHKxZJRBQG1oY8Yr9pGLzRmSsNms0iNWyHHAlZCa7mmKiFR10YPZuz/2k169JiS/inOjBCZ2A==}
+
+  playwright-core@1.64.0:
+    resolution: {integrity: sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   plist@3.1.0:
     resolution: {integrity: sha512-uysumyrvkUX0rX/dEVqt8gC3sTBzd4zoWfLeS29nb53imdaXVvLINYXTI2GNqzaMuvacNx4uJQ8+b3zXR0pkgQ==}
@@ -15644,6 +15652,8 @@ snapshots:
       confbox: 0.2.1
       exsolve: 1.0.4
       pathe: 2.0.3
+
+  playwright-core@1.64.0: {}
 
   plist@3.1.0:
     dependencies:

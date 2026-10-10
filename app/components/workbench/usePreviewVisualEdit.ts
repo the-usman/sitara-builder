@@ -7,7 +7,9 @@ import {
   previewEditMode,
   replaceTextInProject,
   replaceTextNearLine,
-  selectedPreviewElement,
+  addSelection,
+  removeSelection,
+  selectedPreviewElements,
   toProjectRelative,
   type PreviewSource,
 } from '~/lib/stores/visual-edit';
@@ -17,17 +19,30 @@ interface BridgeSource {
   file: string;
   line: number;
   column?: number;
+  approx?: boolean;
 }
 
 type BridgeMessage =
   | { type: 'ready' }
   | { type: 'escape' }
   | { type: 'unsupported'; reason: 'no-source' | 'not-text' }
-  | { type: 'selected'; source: BridgeSource | null; tag: string; text: string; html: string }
+  | { type: 'selected'; id: number; source: BridgeSource | null; tag: string; text: string; html: string }
+  | { type: 'deselected'; id: number }
   | { type: 'text-edit'; source: BridgeSource | null; oldText: string; newText: string; tag: string };
 
-function toSource(source: BridgeSource | null): PreviewSource | undefined {
-  return source ? { file: toProjectRelative(source.file), line: source.line, column: source.column } : undefined;
+/*
+ * Only a real location object counts. Previews still running the old bridge send the string
+ * 'sitara-preview' in this field (it doubled as the message marker) — treat that as "unknown",
+ * which falls back to finding the element by its text.
+ */
+export function toSource(source: unknown): PreviewSource | undefined {
+  if (!source || typeof source !== 'object' || typeof (source as BridgeSource).file !== 'string') {
+    return undefined;
+  }
+
+  const { file, line, column, approx } = source as BridgeSource;
+
+  return { file: toProjectRelative(file), line: Number(line) || 1, column, approx };
 }
 
 /** Where to write the edit: next to the element's JSX if known, else the one file containing the text. */
@@ -39,7 +54,10 @@ function locateTextEdit(source: PreviewSource | undefined, oldText: string, newT
     const file = files[filePath];
 
     if (file?.type === 'file' && !file.isBinary) {
-      const content = replaceTextNearLine(file.content, source.line, oldText, newText);
+      // React 19's line is only a hint: then the text must occur exactly once in that file.
+      const content = source.approx
+        ? replaceTextInProject({ [filePath]: file }, oldText, newText)?.content
+        : replaceTextNearLine(file.content, source.line, oldText, newText);
 
       if (content !== undefined) {
         return { filePath, content };
@@ -62,7 +80,7 @@ async function applyTextEdit(message: Extract<BridgeMessage, { type: 'text-edit'
   }
 
   // Not literal JSX text (a variable, prop, data file…): hand it to the AI with the location.
-  selectedPreviewElement.set({ source, tag: message.tag, text: message.oldText, html: '' });
+  addSelection({ id: -Date.now(), source, tag: message.tag, text: message.oldText, html: '' });
   pendingChatPrompt.set(`Change the text "${message.oldText.trim()}" to "${message.newText.trim()}".`);
   toast.info(
     "That text isn't written directly in this component — send the prepared message and the AI will change it.",
@@ -80,11 +98,34 @@ export function usePreviewVisualEdit(iframeRef: RefObject<HTMLIFrameElement>) {
     iframeRef.current?.contentWindow?.postMessage({ type: 'sitara:mode', mode }, '*');
   }, [mode, iframeRef]);
 
+  // Chip ✕, "Clear all" and sending the message remove selections: drop their boxes in the page too.
+  useEffect(() => {
+    let previous = selectedPreviewElements.get().map((s) => s.id);
+
+    return selectedPreviewElements.listen((selections) => {
+      const ids = selections.map((s) => s.id);
+      const target = iframeRef.current?.contentWindow;
+
+      if (!ids.length) {
+        target?.postMessage({ type: 'sitara:clear-selection' }, '*');
+      } else {
+        previous
+          .filter((id) => !ids.includes(id))
+          .forEach((id) => target?.postMessage({ type: 'sitara:remove-selection', id }, '*'));
+      }
+
+      previous = ids;
+    });
+  }, [iframeRef]);
+
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      const data = event.data as (BridgeMessage & { source?: unknown }) | undefined;
+      const data = event.data as (BridgeMessage & { from?: unknown; source?: unknown }) | undefined;
 
-      if (event.source !== iframeRef.current?.contentWindow || data?.source !== 'sitara-preview') {
+      // `from` is the marker; previews started before the fix still mark messages via `source`.
+      const fromBridge = data?.from === 'sitara-preview' || data?.source === 'sitara-preview';
+
+      if (event.source !== iframeRef.current?.contentWindow || !fromBridge) {
         return;
       }
 
@@ -101,13 +142,18 @@ export function usePreviewVisualEdit(iframeRef: RefObject<HTMLIFrameElement>) {
           break;
 
         case 'selected':
-          selectedPreviewElement.set({
+          addSelection({
+            id: message.id,
             source: toSource(message.source),
             tag: message.tag,
             text: message.text,
             html: message.html,
           });
           document.querySelector<HTMLTextAreaElement>('textarea')?.focus();
+          break;
+
+        case 'deselected':
+          removeSelection(message.id);
           break;
 
         case 'text-edit':

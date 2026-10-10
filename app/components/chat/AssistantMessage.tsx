@@ -1,3 +1,4 @@
+import { hideLeakedToolCalls } from '~/utils/leaked-tool-call';
 import { memo, Fragment } from 'react';
 import { Markdown } from './Markdown';
 import type { JSONValue } from 'ai';
@@ -162,7 +163,7 @@ export const AssistantMessage = memo(({ content, annotations, messageId, onRewin
           </div>
         </div>
       </>
-      <Markdown html>{content}</Markdown>
+      <Markdown html>{hideLeakedToolCalls(content)}</Markdown>
     </div>
   );
 });

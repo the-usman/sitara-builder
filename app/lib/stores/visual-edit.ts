@@ -15,9 +15,14 @@ export interface PreviewSource {
   file: string;
   line: number;
   column?: number;
+
+  /** React 19 only gives the file reliably; the line is a hint into the dev server's transformed code. */
+  approx?: boolean;
 }
 
 export interface SelectedPreviewElement {
+  /** Selection id from the preview bridge, so a click in the preview or a chip ✕ removes the right one. */
+  id: number;
   source?: PreviewSource;
   tag: string;
   text: string;
@@ -25,7 +30,17 @@ export interface SelectedPreviewElement {
 }
 
 export const previewEditMode = atom<PreviewEditMode>('off');
-export const selectedPreviewElement = atom<SelectedPreviewElement | undefined>(undefined);
+
+/** Sections picked in the preview (several allowed); they ride along with the next chat message. */
+export const selectedPreviewElements = atom<SelectedPreviewElement[]>([]);
+
+export function addSelection(selection: SelectedPreviewElement) {
+  selectedPreviewElements.set([...selectedPreviewElements.get().filter((s) => s.id !== selection.id), selection]);
+}
+
+export function removeSelection(id: number) {
+  selectedPreviewElements.set(selectedPreviewElements.get().filter((s) => s.id !== id));
+}
 
 /** Text for the chat input to adopt (e.g. a text edit that has to go through the AI). */
 export const pendingChatPrompt = atom<string | undefined>(undefined);
@@ -46,22 +61,20 @@ export function toProjectRelative(fileName: string): string {
 }
 
 export function describeSelection(selection: SelectedPreviewElement): string {
-  const where = selection.source ? `${selection.source.file}:${selection.source.line}` : 'unknown file';
+  const { source } = selection;
+  const where = source ? (source.approx ? source.file : `${source.file}:${source.line}`) : 'unknown file';
+
   return `<${selection.tag}> · ${where}`;
 }
 
-/**
- * Appends what the user selected in the preview to their message, so the model knows exactly
- * which element "this" refers to, then clears the selection.
- */
 const SNIPPET_BEFORE = 3;
 const SNIPPET_AFTER = 45;
 
 /*
- * When React couldn't say where an element is written (Next.js server components), find it by
- * its visible text: the source file containing the most of its distinctive text lines wins.
+ * Find an element in the code by its visible text: the source file containing the most of its
+ * distinctive text lines wins (optionally only within one file — React 19 tells us the file).
  */
-export function locateByText(files: FileMap, text: string): PreviewSource | undefined {
+export function locateByText(files: FileMap, text: string, onlyFile?: string): PreviewSource | undefined {
   const phrases = text
     .split('\n')
     .map((line) => line.trim())
@@ -81,7 +94,8 @@ export function locateByText(files: FileMap, text: string): PreviewSource | unde
       dirent?.type !== 'file' ||
       dirent.isBinary ||
       !SOURCE_FILE.test(filePath) ||
-      filePath.includes('/node_modules/')
+      filePath.includes('/node_modules/') ||
+      (onlyFile && toProjectRelative(filePath) !== onlyFile)
     ) {
       continue;
     }
@@ -99,6 +113,21 @@ export function locateByText(files: FileMap, text: string): PreviewSource | unde
   return best?.source;
 }
 
+/** Exact location when React gave one; otherwise the text, searched in the hinted file first. */
+export function resolveSelectionSource(files: FileMap, selection: SelectedPreviewElement): PreviewSource | undefined {
+  const { source } = selection;
+
+  if (source && !source.approx) {
+    return source;
+  }
+
+  if (source) {
+    return locateByText(files, selection.text, source.file) ?? { file: source.file, line: Math.max(1, source.line) };
+  }
+
+  return locateByText(files, selection.text);
+}
+
 function codeSnippet(files: FileMap, source: PreviewSource): string | undefined {
   const file = files[`${WORK_DIR}/${source.file}`];
 
@@ -110,50 +139,72 @@ function codeSnippet(files: FileMap, source: PreviewSource): string | undefined 
   const from = Math.max(0, source.line - 1 - SNIPPET_BEFORE);
   const to = Math.min(lines.length, source.line - 1 + SNIPPET_AFTER);
   const language = source.file.split('.').pop() || '';
+  const fence = '`'.repeat(3);
 
   return [
-    `Current code of ${source.file}, lines ${from + 1}-${to} (the selected element starts on line ${source.line}):`,
-    '```' + language,
+    `Current code of ${source.file}, lines ${from + 1}-${to} (the selected element starts around line ${source.line}):`,
+    fence + language,
     lines.slice(from, to).join('\n'),
-    '```',
+    fence,
   ].join('\n');
 }
 
 /** Matches the block withSelectedElementContext adds; UserMessage renders it as a card. */
 export const SELECTION_BLOCK_RE = /<sitara-selection([^>]*)>[\s\S]*?<\/sitara-selection>\s*/;
 
+/** The per-target summary lines inside the block, for the chat card. */
+export const SELECTION_TARGET_RE = /<target n="(\d+)" tag="([^"]*)" file="([^"]*)" line="([^"]*)" \/>/g;
+
 /**
- * Prepends what the user selected in the preview to their message — the element, the file and
- * the actual code around it — so the model edits exactly that section, then clears the
- * selection. Wrapped in <sitara-selection> so the chat can show it as a card.
+ * Prepends what the user selected in the preview — each element, its file and the actual code
+ * around it — so the model edits exactly those sections, then clears the selection. Wrapped in
+ * <sitara-selection> so the chat can show it as a card.
  */
 export function withSelectedElementContext(message: string, files: FileMap): string {
-  const selection = selectedPreviewElement.get();
+  const selections = selectedPreviewElements.get();
 
-  if (!selection) {
+  if (!selections.length) {
     return message;
   }
 
-  selectedPreviewElement.set(undefined);
+  selectedPreviewElements.set([]);
 
-  const source = selection.source ?? locateByText(files, selection.text);
-  const snippet = source ? codeSnippet(files, source) : undefined;
-  const where = source ? `${source.file}, line ${source.line}` : 'an unknown file (find it from the HTML below)';
+  const targets = selections.map((selection, index) => ({
+    n: index + 1,
+    selection,
+    source: resolveSelectionSource(files, selection),
+  }));
 
-  const block = [
-    `<sitara-selection tag="${selection.tag}" file="${source?.file ?? ''}" line="${source?.line ?? ''}">`,
-    `TARGET: the user selected a <${selection.tag}> element in the live preview, defined in ${where}.`,
-    'Apply the request below to THIS element/section only. Do not change other components, sections or files',
-    'unless the request explicitly needs it. Prefer a small edit action on this file.',
-    '',
-    snippet ?? '',
-    '',
-    `Visible text of the selection: ${JSON.stringify(selection.text.slice(0, 300))}`,
-    `Rendered HTML of the selection (truncated): ${selection.html.slice(0, 1200)}`,
-    '</sitara-selection>',
-  ]
-    .filter((line, index, all) => !(line === '' && all[index - 1] === ''))
-    .join('\n');
+  const lines = [
+    '<sitara-selection>',
+    ...targets.map(
+      ({ n, selection, source }) =>
+        `<target n="${n}" tag="${selection.tag}" file="${source?.file ?? ''}" line="${source?.line ?? ''}" />`,
+    ),
+    targets.length > 1
+      ? `TARGETS: the user selected ${targets.length} elements in the live preview (numbered below). Apply the request to THESE elements/sections only.`
+      : 'TARGET: the user selected this element in the live preview. Apply the request to THIS element/section only.',
+    'Do not change other components, sections or files unless the request explicitly needs it. Prefer small edit actions.',
+  ];
+
+  for (const { n, selection, source } of targets) {
+    const where = source
+      ? `${source.file}, around line ${source.line}`
+      : 'an unknown file (find it from the HTML below)';
+    const snippet = source ? codeSnippet(files, source) : undefined;
+
+    lines.push(
+      '',
+      `### Target ${n}: <${selection.tag}> in ${where}`,
+      snippet ?? '',
+      `Visible text: ${JSON.stringify(selection.text.slice(0, 300))}`,
+      `Rendered HTML (truncated): ${selection.html.slice(0, 1200)}`,
+    );
+  }
+
+  lines.push('</sitara-selection>');
+
+  const block = lines.filter((line, index, all) => !(line === '' && all[index - 1] === '')).join('\n');
 
   return `${block}\n\nREQUEST: ${message}`;
 }

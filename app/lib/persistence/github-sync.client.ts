@@ -53,6 +53,9 @@ export function getLastUserPrompt(messages: Message[]): string | undefined {
 export interface GithubPushResult {
   ok: boolean;
   repoUrl?: string;
+
+  /** Why the push failed, for callers that report it themselves (the Sync Files button). */
+  error?: string;
 }
 
 function toPlainFiles(files: FileMap): Record<string, string> {
@@ -93,13 +96,13 @@ export async function pushToGithub(args: GithubPushArgs): Promise<GithubPushResu
       const message = body.error || `HTTP ${response.status}`;
       reportPushFailure(args.trackingId, message);
 
-      return { ok: false };
+      return { ok: false, error: message };
     }
 
     const data = (await response.json()) as { success: boolean; skipped?: boolean; repoUrl?: string };
 
     if (data.skipped) {
-      return { ok: false };
+      return { ok: false, error: 'GitHub sync is not set up for this chat' };
     }
 
     warnedTrackingIds.delete(args.trackingId);
@@ -109,7 +112,7 @@ export async function pushToGithub(args: GithubPushArgs): Promise<GithubPushResu
     const message = error instanceof Error ? error.message : String(error);
     reportPushFailure(args.trackingId, message);
 
-    return { ok: false };
+    return { ok: false, error: message };
   }
 }
 
