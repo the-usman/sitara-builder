@@ -1,209 +1,154 @@
 import type { PromptSkill } from './types';
 
+/*
+ * Backend & database rules for the one supported stack: TanStack Start + Supabase (Postgres,
+ * Auth, Storage). Adapted from the team's "Backend and Database Rules" (written for Next.js):
+ * Server Components/Actions → route loaders + server functions, Route Handlers → server routes,
+ * NEXT_PUBLIC_ → VITE_, `server-only` → `@tanstack/react-start/server-only`. The client setup
+ * below was verified in a sandbox against @tanstack/react-start 1.168 and @supabase/ssr 0.12.
+ */
 export const databaseSupabaseSkill: PromptSkill = {
   name: 'database-supabase',
-  description: 'Supabase database rules: migrations + immediate queries, RLS, auth, data-safety requirements.',
+  description: 'Backend & database rules: Supabase clients, server functions, migrations, RLS, auth, storage, secrets.',
   triggers:
-    /\b(database|db|supabase|sql|postgres|table|tables|schema|migration|crud|auth|login|log in|signup|sign up|signin|sign in|register|account|persist|storage)\b/,
+    /\b(database|db|supabase|sql|postgres|table|tables|schema|migration|crud|auth|login|log in|signup|sign up|signin|sign in|register|account|persist|storage|backend|back-end|api)\b/,
   isNeeded: (ctx) => !!ctx.supabase?.isConnected,
   body: ({ supabase }) => `
 <database_instructions>
-  The following instructions guide how you should handle database operations in projects.
+  Every project that needs data uses a Supabase backend (Postgres, Auth, Storage), accessed from a
+  TanStack Start app. Follow these rules every time you write backend or database code.
 
-  CRITICAL: Use Supabase for databases by default, unless specified otherwise.
-
-  IMPORTANT NOTE: Supabase project setup and configuration is handled seperately by the user! ${
+  Supabase connection: ${
     supabase
       ? !supabase.isConnected
-        ? 'You are not connected to Supabase. Remind the user to "connect to Supabase in the chat box before proceeding with database operations".'
+        ? 'NOT connected. Before any database work, tell the user to "connect to Supabase in the chat box".'
         : !supabase.hasSelectedProject
-          ? 'Remind the user "You are connected to Supabase but no project is selected. Remind the user to select a project in the chat box before proceeding with database operations".'
-          : ''
-      : ''
-  } 
-    IMPORTANT: Create a .env file if it doesnt exist${
-      supabase?.isConnected &&
-      supabase?.hasSelectedProject &&
-      supabase?.credentials?.supabaseUrl &&
-      supabase?.credentials?.anonKey
-        ? ` and include the following variables:
+          ? 'connected, but no project selected. Tell the user to select a project in the chat box before database work.'
+          : 'connected and a project is selected.'
+      : 'unknown.'
+  }
+  Create \`.env\` if it doesn't exist${
+    supabase?.isConnected &&
+    supabase?.hasSelectedProject &&
+    supabase?.credentials?.supabaseUrl &&
+    supabase?.credentials?.anonKey
+      ? ` with:
     VITE_SUPABASE_URL=${supabase.credentials.supabaseUrl}
     VITE_SUPABASE_ANON_KEY=${supabase.credentials.anonKey}`
-        : '.'
+      : '.'
+  } Never commit \`.env\`; keep a \`.env.example\` with the same keys and empty values.
+
+  ## 1. The golden rule: secrets never reach the browser
+  - Anything that runs in the browser can be read by anyone. Treat it as public.
+  - The Supabase service role key and every third-party key (Stripe, OpenAI, Resend…) are used ONLY in
+    server code.
+  - Server code means: server function handlers (\`createServerFn(...).handler\`), server routes
+    (\`server.handlers\` on a route), and modules that start with \`import '@tanstack/react-start/server-only'\`
+    (put them in \`src/server/\` or \`src/lib/supabase/\`).
+  - Only these two values may be public (the \`VITE_\` prefix exposes a variable to the browser):
+    \`VITE_SUPABASE_URL\` and \`VITE_SUPABASE_ANON_KEY\`. NEVER give a secret a \`VITE_\` name.
+  - Read secrets with \`process.env.X\` inside server code only. Never hardcode a key in source.
+
+  ## 2. Where database calls happen (in this order of preference)
+  1. Reading data for a page: the route's \`loader\` calling a GET server function.
+  2. Mutations (forms, create/update/delete): POST server functions, followed by \`router.invalidate()\`.
+  3. Server routes (\`src/routes/api/...\` with \`server: { handlers }\`) ONLY when something external calls
+     the app: webhooks, cron jobs, public APIs.
+  4. Browser Supabase client ONLY for realtime subscriptions and auth UI, only with the anon key, and only
+     when RLS is enabled on every table involved.
+  Never query the database from a component with a privileged key.
+
+  ## 3. Supabase client setup — create once per project, reuse everywhere
+  - \`src/lib/supabase/server.ts\` — acts as the logged-in user, so RLS applies:
+    \`\`\`ts
+    import '@tanstack/react-start/server-only';
+    import { createServerClient } from '@supabase/ssr';
+    import { getCookies, setCookie } from '@tanstack/react-start/server';
+    import type { Database } from '@/types/database';
+
+    export function getSupabaseServerClient() {
+      return createServerClient<Database>(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY, {
+        cookies: {
+          getAll: () => Object.entries(getCookies()).map(([name, value]) => ({ name, value })),
+          setAll: (cookies) => cookies.forEach(({ name, value, options }) => setCookie(name, value, options)),
+        },
+      });
     }
-  NEVER modify any Supabase configuration or \`.env\` files apart from creating the \`.env\`.
+    \`\`\`
+  - \`src/lib/supabase/client.ts\` — \`createBrowserClient\` from \`@supabase/ssr\` with the anon key. Realtime
+    and auth UI only.
+  - \`src/lib/supabase/admin.ts\` — MUST start with \`import '@tanstack/react-start/server-only'\`; creates a
+    client with \`process.env.SUPABASE_SERVICE_ROLE_KEY\` (\`auth: { persistSession: false }\`). It bypasses RLS:
+    only for trusted work (webhooks, admin jobs, seeding), never for a normal user request the server
+    client can handle.
+  - Session refresh: there is no middleware.ts. Call \`supabase.auth.getUser()\` through the server client in
+    the server function that guards a route (see Auth); \`setAll\` writes the refreshed cookies.
+  - Install: \`npm install @supabase/supabase-js @supabase/ssr zod\`.
 
-  Do not try to generate types for supabase.
+  ## 4. Schema and migrations
+  For EVERY database change provide TWO actions with identical SQL — a migration file and an
+  immediate query against the selected project:
+    <boltAction type="supabase" operation="migration" filePath="/supabase/migrations/20261010120000_create_posts.sql">
+      /* SQL */
+    </boltAction>
+    <boltAction type="supabase" operation="query" projectId="\${projectId}">
+      /* the same SQL */
+    </boltAction>
+  - Name migrations \`YYYYMMDDHHMMSS_description.sql\` (UTC timestamp, increasing). NEVER edit an old
+    migration; always add a new one. Always write the complete file, never an edit action.
+  - Start every migration with a /* … */ summary: a title, new tables and columns, changed tables, and
+    security (RLS, policies), readable by non-technical people.
+  - Every table: \`id uuid primary key default gen_random_uuid()\`, \`created_at timestamptz default now()\`, and
+    for user-owned rows \`user_id uuid not null references auth.users(id) on delete cascade\`.
+  - Index foreign keys and columns used in filters. Use sensible defaults; use IF NOT EXISTS / DO $$ … $$
+    blocks so migrations are re-runnable.
+  - After schema changes, keep \`src/types/database.ts\` (the Supabase \`Database\` type) in sync and use it
+    in all queries.
+  - DATA SAFETY: never run destructive SQL (DROP, DELETE, type changes that lose data, renames) unless the
+    user explicitly asks; never use BEGIN/COMMIT/ROLLBACK/END transaction statements (DO $$ BEGIN … END $$
+    blocks are fine).
 
-  CRITICAL DATA PRESERVATION AND SAFETY REQUIREMENTS:
-    - DATA INTEGRITY IS THE HIGHEST PRIORITY, users must NEVER lose their data
-    - FORBIDDEN: Any destructive operations like \`DROP\` or \`DELETE\` that could result in data loss (e.g., when dropping columns, changing column types, renaming tables, etc.)
-    - FORBIDDEN: Any transaction control statements (e.g., explicit transaction management) such as:
-      - \`BEGIN\`
-      - \`COMMIT\`
-      - \`ROLLBACK\`
-      - \`END\`
+  ## 5. Row Level Security (mandatory)
+  - \`alter table <name> enable row level security;\` on EVERY table, in the migration that creates it.
+  - Explicit policies for select, insert, update and delete. Owner policy: \`using (auth.uid() = user_id)\`
+    and \`with check (auth.uid() = user_id)\`.
+  - Public read data (blog posts, listings) gets a select policy for \`anon\`; writes stay restricted.
+  - RLS with no policies blocks everything — safe, but tell the user if a feature won't work until a
+    policy is added.
 
-      Note: This does NOT apply to \`DO $$ BEGIN ... END $$\` blocks, which are PL/pgSQL anonymous blocks!
+  ## 6. Validating input
+  - Never trust browser data: validate every server function with zod in \`.validator()\`, and every server
+    route body with zod, before touching the database.
+  - Check the user (\`supabase.auth.getUser()\`) at the top of every server function that needs auth. Hiding a
+    button is not security.
+  - Return clear, safe error messages; never send raw database errors or stack traces to the client.
 
-      Writing SQL Migrations:
-      CRITICAL: For EVERY database change, you MUST provide TWO actions:
-        1. Migration File Creation:
-          <boltAction type="supabase" operation="migration" filePath="/supabase/migrations/your_migration.sql">
-            /* SQL migration content */
-          </boltAction>
+  ## 7. Auth
+  - Use Supabase Auth with email and password unless the user asks otherwise (no magic links, OAuth or
+    SSO unless asked; email confirmation off unless asked). Never build a custom auth system or users
+    table for passwords.
+  - Protect private routes in the route's \`beforeLoad\`: call a server function that runs
+    \`getUser()\` with the server client and \`throw redirect({ to: '/login' })\` when there is no user.
+  - Use \`getUser()\` on the server for security decisions, never \`getSession()\`.
 
-        2. Immediate Query Execution:
-          <boltAction type="supabase" operation="query" projectId="\${projectId}">
-            /* Same SQL content as migration */
-          </boltAction>
+  ## 8. File storage
+  - Supabase Storage buckets, private by default, with storage policies tied to \`auth.uid()\`.
+  - Browser uploads use signed upload URLs created in a server function (\`createSignedUploadUrl\`).
 
-        Example:
-        <boltArtifact id="create-users-table" title="Create Users Table">
-          <boltAction type="supabase" operation="migration" filePath="/supabase/migrations/create_users.sql">
-            CREATE TABLE users (
-              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-              email text UNIQUE NOT NULL
-            );
-          </boltAction>
+  ## 9. Environment variables and Vercel
+  - When a feature needs a new env var, add it to \`.env.example\` and tell the user exactly which variable
+    to set in the Vercel project settings and whether it is public (VITE_) or secret.
+  - Preview deployments must use a separate Supabase project or branch from production. Never point a
+    preview at production data.
 
-          <boltAction type="supabase" operation="query" projectId="\${projectId}">
-            CREATE TABLE users (
-              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-              email text UNIQUE NOT NULL
-            );
-          </boltAction>
-        </boltArtifact>
-
-    - IMPORTANT: The SQL content must be identical in both actions to ensure consistency between the migration file and the executed query.
-    - CRITICAL: NEVER use diffs for migration files, ALWAYS provide COMPLETE file content
-    - For each database change, create a new SQL migration file in \`/home/project/supabase/migrations\`
-    - NEVER update existing migration files, ALWAYS create a new migration file for any changes
-    - Name migration files descriptively and DO NOT include a number prefix (e.g., \`create_users.sql\`, \`add_posts_table.sql\`).
-
-    - DO NOT worry about ordering as the files will be renamed correctly!
-
-    - ALWAYS enable row level security (RLS) for new tables:
-
-      <example>
-        alter table users enable row level security;
-      </example>
-
-    - Add appropriate RLS policies for CRUD operations for each table
-
-    - Use default values for columns:
-      - Set default values for columns where appropriate to ensure data consistency and reduce null handling
-      - Common default values include:
-        - Booleans: \`DEFAULT false\` or \`DEFAULT true\`
-        - Numbers: \`DEFAULT 0\`
-        - Strings: \`DEFAULT ''\` or meaningful defaults like \`'user'\`
-        - Dates/Timestamps: \`DEFAULT now()\` or \`DEFAULT CURRENT_TIMESTAMP\`
-      - Be cautious not to set default values that might mask problems; sometimes it's better to allow an error than to proceed with incorrect data
-
-    - CRITICAL: Each migration file MUST follow these rules:
-      - ALWAYS Start with a markdown summary block (in a multi-line comment) that:
-        - Include a short, descriptive title (using a headline) that summarizes the changes (e.g., "Schema update for blog features")
-        - Explains in plain English what changes the migration makes
-        - Lists all new tables and their columns with descriptions
-        - Lists all modified tables and what changes were made
-        - Describes any security changes (RLS, policies)
-        - Includes any important notes
-        - Uses clear headings and numbered sections for readability, like:
-          1. New Tables
-          2. Security
-          3. Changes
-
-        IMPORTANT: The summary should be detailed enough that both technical and non-technical stakeholders can understand what the migration does without reading the SQL.
-
-      - Include all necessary operations (e.g., table creation and updates, RLS, policies)
-
-      Here is an example of a migration file:
-
-      <example>
-        /*
-          # Create users table
-
-          1. New Tables
-            - \`users\`
-              - \`id\` (uuid, primary key)
-              - \`email\` (text, unique)
-              - \`created_at\` (timestamp)
-          2. Security
-            - Enable RLS on \`users\` table
-            - Add policy for authenticated users to read their own data
-        */
-
-        CREATE TABLE IF NOT EXISTS users (
-          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          email text UNIQUE NOT NULL,
-          created_at timestamptz DEFAULT now()
-        );
-
-        ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-
-        CREATE POLICY "Users can read own data"
-          ON users
-          FOR SELECT
-          TO authenticated
-          USING (auth.uid() = id);
-      </example>
-
-    - Ensure SQL statements are safe and robust:
-      - Use \`IF EXISTS\` or \`IF NOT EXISTS\` to prevent errors when creating or altering database objects. Here are examples:
-
-      <example>
-        CREATE TABLE IF NOT EXISTS users (
-          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-          email text UNIQUE NOT NULL,
-          created_at timestamptz DEFAULT now()
-        );
-      </example>
-
-      <example>
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'last_login'
-          ) THEN
-            ALTER TABLE users ADD COLUMN last_login timestamptz;
-          END IF;
-        END $$;
-      </example>
-
-  Client Setup:
-    - Use \`@supabase/supabase-js\`
-    - Create a singleton client instance
-    - Use the environment variables from the project's \`.env\` file
-    - Use TypeScript generated types from the schema
-
-  Authentication:
-    - ALWAYS use email and password sign up
-    - FORBIDDEN: NEVER use magic links, social providers, or SSO for authentication unless explicitly stated!
-    - FORBIDDEN: NEVER create your own authentication system or authentication table, ALWAYS use Supabase's built-in authentication!
-    - Email confirmation is ALWAYS disabled unless explicitly stated!
-
-  Row Level Security:
-    - ALWAYS enable RLS for every new table
-    - Create policies based on user authentication
-    - Test RLS policies by:
-        1. Verifying authenticated users can only access their allowed data
-        2. Confirming unauthenticated users cannot access protected data
-        3. Testing edge cases in policy conditions
-
-  Best Practices:
-    - One migration per logical change
-    - Use descriptive policy names
-    - Add indexes for frequently queried columns
-    - Keep RLS policies simple and focused
-    - Use foreign key constraints
-
-  TypeScript Integration:
-    - Generate types from database schema
-    - Use strong typing for all database operations
-    - Maintain type safety throughout the application
-
-  IMPORTANT: NEVER skip RLS setup for any table. Security is non-negotiable!
+  ## 10. Before you finish any backend change, check
+  - [ ] No secret in browser code or in a VITE_ variable
+  - [ ] The admin client is imported only from server-only modules
+  - [ ] New tables have RLS enabled and policies written
+  - [ ] Migration file added (timestamped) and executed; \`src/types/database.ts\` updated
+  - [ ] Inputs validated with zod; auth checked on the server
+  - [ ] No type errors in what you wrote
+  - [ ] You told the user about new env vars or manual setup steps
 </database_instructions>
 `,
 };
