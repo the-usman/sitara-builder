@@ -1,5 +1,5 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
-import { createDataStream, generateId } from 'ai';
+import { createDataStream, formatDataStreamPart, generateId } from 'ai';
 import { MAX_RESPONSE_SEGMENTS, MAX_TOKENS, type FileMap } from '~/lib/.server/llm/constants';
 import { CONTINUE_PROMPT } from '~/lib/common/prompts/prompts';
 import { streamText, type Messages, type StreamingOptions } from '~/lib/.server/llm/stream-text';
@@ -17,6 +17,7 @@ import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
 import { computeCost } from '~/lib/.server/llm/model-pricing';
 import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
 import { hasLeakedToolCall, stripLeakedToolCall, TOOL_CALL_RETRY_PROMPT } from '~/utils/leaked-tool-call';
+import { planStallRetry, STALL_LIMITS, STALL_MARKER } from '~/lib/.server/llm/stall-watchdog';
 
 const MAX_TOOL_CALL_RETRIES = 2;
 
@@ -96,6 +97,13 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
     totalTokens: 0,
   };
   let loadedSkills: string[] = [];
+  let stallRetries = 0;
+
+  // Everything the model has sent in this reply, across segments — see planStallRetry.
+  let replyText = '';
+
+  // True from aborting a stalled stream until the next stream sends something (see onError).
+  let stallAbortPending = false;
   const encoder: TextEncoder = new TextEncoder();
   let progressCounter: number = 1;
 
@@ -243,8 +251,11 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
             if (finishReason !== 'length' && !leakedToolCall) {
               const lastUserMsg = messages.filter((x) => x.role === 'user').slice(-1)[0];
               const { model: usageModel, provider: usageProvider } = extractPropertiesFromMessage(lastUserMsg);
-              // OpenRouter/Together expose live per-token pricing; first-party
-              // providers don't, so this returns undefined and we use the static table.
+
+              /*
+               * OpenRouter/Together expose live per-token pricing; first-party
+               * providers don't, so this returns undefined and we use the static table.
+               */
               const liveRate = await getLiveModelRate(
                 usageProvider,
                 usageModel,
@@ -297,8 +308,10 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               } else if (!selectedClient) {
                 console.error('[chat-tracker] SKIP: selectedClient is null/undefined');
               } else {
-                // MongoDB treats dots in dot-notation paths as nested keys, so a model
-                // name like "gpt-4.1" would scatter usage across bogus sub-documents.
+                /*
+                 * MongoDB treats dots in dot-notation paths as nested keys, so a model
+                 * name like "gpt-4.1" would scatter usage across bogus sub-documents.
+                 */
                 const modelKey = `${usageModel}:${usageProvider}`.replace(/\./g, '_');
                 console.log(
                   `[chat-tracker] saving — trackingId: ${trackingId}, client: ${selectedClient.clientName}, model: ${modelKey}, cost: $${cost.totalCost.toFixed(4)}`,
@@ -356,53 +369,166 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               );
             }
 
-            const lastUserMessage = messages.filter((x) => x.role == 'user').slice(-1)[0];
-            const { model, provider } = extractPropertiesFromMessage(lastUserMessage);
-            messages.push({
-              id: generateId(),
-              role: 'assistant',
-              content: leakedToolCall ? stripLeakedToolCall(content) : content,
-            });
-            messages.push({
-              id: generateId(),
-              role: 'user',
-              content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${leakedToolCall ? TOOL_CALL_RETRY_PROMPT : CONTINUE_PROMPT}`,
-            });
-
-            const result = await streamText({
-              messages,
-              env: context.cloudflare?.env,
-              options,
-              apiKeys,
-              files,
-              providerSettings,
-              promptId,
-              contextOptimization,
-              contextFiles: filteredFiles,
-              summary,
-              messageSliceId,
-              onSkillsLoaded: (skills) => {
-                loadedSkills = skills;
-              },
-            });
-
-            result.mergeIntoDataStream(dataStream);
-
-            (async () => {
-              for await (const part of result.fullStream) {
-                if (part.type === 'error') {
-                  const error: any = part.error;
-                  logger.error(`${error}`);
-                  dataStream.writeData({ type: 'error', error: classifyProviderError(error) });
-
-                  return;
-                }
-              }
-            })();
+            pushContinuation(
+              leakedToolCall ? stripLeakedToolCall(content) : content,
+              leakedToolCall ? TOOL_CALL_RETRY_PROMPT : CONTINUE_PROMPT,
+            );
+            await startSegment();
 
             return;
           },
         };
+
+        /** Ends the history with the partial reply plus a follow-up instruction, for the next segment. */
+        function pushContinuation(partialReply: string, instruction: string) {
+          const lastUserMessage = messages.filter((x) => x.role == 'user').slice(-1)[0];
+          const { model, provider } = extractPropertiesFromMessage(lastUserMessage);
+          messages.push({ id: generateId(), role: 'assistant', content: partialReply });
+          messages.push({
+            id: generateId(),
+            role: 'user',
+            content: `[Model: ${model}]\n\n[Provider: ${provider}]\n\n${instruction}`,
+          });
+        }
+
+        /*
+         * One model call, streamed into the response. A watchdog aborts it when the provider goes
+         * silent but keeps the connection open — otherwise the chat shows "Generating Response"
+         * forever — and continues from the text received so far, like a cut-off reply.
+         */
+        async function startSegment() {
+          const abort = new AbortController();
+          let stalled = false;
+
+          const result = await streamText({
+            messages,
+            env: context.cloudflare?.env,
+            options: {
+              ...options,
+              abortSignal: abort.signal,
+              onFinish: async (event) => {
+                if (!stalled) {
+                  await options.onFinish?.(event);
+                }
+              },
+            },
+            apiKeys,
+            files,
+            providerSettings,
+            promptId,
+            contextOptimization,
+            contextFiles: filteredFiles,
+            summary,
+            messageSliceId,
+            onSkillsLoaded: (skills) => {
+              loadedSkills = skills;
+            },
+          });
+
+          result.mergeIntoDataStream(dataStream);
+
+          (async () => {
+            let text = '';
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let closeHold: (() => void) | undefined;
+
+            const arm = (ms: number) => {
+              clearTimeout(timer);
+              timer = setTimeout(() => {
+                stalled = true;
+                stallAbortPending = true;
+
+                // Keeps the response open until the continuation is merged in (or we give up).
+                dataStream.merge(
+                  new ReadableStream({
+                    start: (controller) => {
+                      closeHold = () => controller.close();
+                    },
+                  }),
+                );
+                logger.warn(`Model sent nothing for ${ms / 1000}s — aborting the stalled stream`);
+                abort.abort(new Error(STALL_MARKER));
+              }, ms);
+            };
+
+            arm(STALL_LIMITS.firstOutputMs);
+
+            try {
+              for await (const part of result.fullStream) {
+                stallAbortPending = stalled;
+
+                if (part.type === 'error') {
+                  if (!stalled) {
+                    logger.error(`${part.error}`);
+                    dataStream.writeData({ type: 'error', error: classifyProviderError(part.error) });
+                  }
+
+                  break;
+                }
+
+                if (part.type === 'text-delta') {
+                  text += part.textDelta;
+                  replyText += part.textDelta;
+                }
+
+                arm(STALL_LIMITS.silenceMs);
+              }
+            } catch (error) {
+              if (!stalled) {
+                logger.error('Model stream failed', error);
+              }
+            } finally {
+              clearTimeout(timer);
+            }
+
+            if (!stalled) {
+              return;
+            }
+
+            try {
+              if (stallRetries >= STALL_LIMITS.maxRetries) {
+                dataStream.writeData({
+                  type: 'error',
+                  error: {
+                    code: 'model_stalled',
+                    message: 'The AI model stopped responding. Send your message again or pick another model.',
+                  },
+                });
+
+                return;
+              }
+
+              stallRetries++;
+
+              // Inside a file/edit action: retry that action in full rather than resuming mid-file.
+              const plan = planStallRetry(replyText, text, CONTINUE_PROMPT);
+              logger.warn(
+                `Retrying after a stalled stream (retry ${stallRetries}${plan.closeText ? ', redoing the interrupted action' : ''})`,
+              );
+
+              if (plan.closeText) {
+                // Let the aborted stream's last buffered text reach the browser first.
+                await new Promise((resolve) => setTimeout(resolve, 50));
+                dataStream.merge(
+                  new ReadableStream({
+                    start: (controller) => {
+                      controller.enqueue(formatDataStreamPart('text', plan.closeText));
+                      controller.close();
+                    },
+                  }),
+                );
+                replyText += plan.closeText;
+              }
+
+              pushContinuation(plan.historyText, plan.instruction);
+              await startSegment();
+            } catch (error) {
+              logger.error('Could not continue after a stalled stream', error);
+            } finally {
+              closeHold?.();
+            }
+          })();
+        }
 
         dataStream.writeData({
           type: 'progress',
@@ -412,40 +538,18 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
           message: 'Generating Response',
         } satisfies ProgressAnnotation);
 
-        const result = await streamText({
-          messages,
-          env: context.cloudflare?.env,
-          options,
-          apiKeys,
-          files,
-          providerSettings,
-          promptId,
-          contextOptimization,
-          contextFiles: filteredFiles,
-          summary,
-          messageSliceId,
-          onSkillsLoaded: (skills) => {
-            loadedSkills = skills;
-          },
-        });
-
-        (async () => {
-          for await (const part of result.fullStream) {
-            if (part.type === 'error') {
-              const error: any = part.error;
-              logger.error(`${error}`);
-              dataStream.writeData({ type: 'error', error: classifyProviderError(error) });
-
-              return;
-            }
-          }
-        })();
-        result.mergeIntoDataStream(dataStream);
+        await startSegment();
       },
-      onError: (error: any) => `Custom error: ${error.message}`,
+
+      // The abort of a stalled stream is expected: tag it so the transform below drops it.
+      onError: (error: any) => (stallAbortPending ? STALL_MARKER : `Custom error: ${error.message}`),
     }).pipeThrough(
       new TransformStream({
         transform: (chunk, controller) => {
+          if (typeof chunk === 'string' && chunk.startsWith('3:') && chunk.includes(STALL_MARKER)) {
+            return;
+          }
+
           if (!lastChunk) {
             lastChunk = ' ';
           }

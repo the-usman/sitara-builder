@@ -21,6 +21,14 @@ export function recordFailedEdit(edit: FailedEdit) {
   failedEdits.set([...failedEdits.get(), edit]);
 }
 
+export function clearFailedEdits(filePath: string) {
+  const remaining = failedEdits.get().filter((edit) => edit.filePath !== filePath);
+
+  if (remaining.length !== failedEdits.get().length) {
+    failedEdits.set(remaining);
+  }
+}
+
 // Marks the automatic retry message, so the chat can tell it apart from what the user typed.
 export const EDIT_RETRY_MARKER = '*Some of your edits could not be applied*';
 

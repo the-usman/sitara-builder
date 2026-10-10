@@ -5,7 +5,8 @@ import type { ActionAlert, BoltAction, DeployAlert, FileHistory, SupabaseAction,
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import { applySearchReplace, parseSearchReplaceBlocks, SearchReplaceError } from '~/utils/search-replace';
-import { recordFailedEdit } from '~/lib/stores/failed-edits';
+import { clearFailedEdits, recordFailedEdit } from '~/lib/stores/failed-edits';
+import { isInterruptedAction } from '~/utils/interrupted-action';
 import type { ActionCallbackData } from './message-parser';
 import type { BoltShell } from '~/utils/shell';
 import {
@@ -141,6 +142,15 @@ export class ActionRunner {
       return; // No return value here
     }
 
+    // Cut off by a stalled stream; the model writes it again in full (see interrupted-action.ts).
+    if (isInterruptedAction(data.action.content)) {
+      if (!isStreaming) {
+        this.#updateAction(actionId, { executed: true, status: 'aborted' });
+      }
+
+      return;
+    }
+
     this.#updateAction(actionId, { ...action, ...data.action, executed: !isStreaming });
 
     this.#currentExecutionPromise = this.#currentExecutionPromise
@@ -169,6 +179,9 @@ export class ActionRunner {
         }
         case 'file': {
           await this.#runFileAction(action);
+
+          // The model rewrote the whole file: edits to it that failed earlier are superseded.
+          clearFailedEdits(nodePath.relative((await this.#webcontainer).workdir, action.filePath));
           break;
         }
         case 'edit': {
