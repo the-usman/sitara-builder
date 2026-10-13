@@ -11,6 +11,8 @@ import { upsertProject, type ChatClient } from '~/lib/project-tracker.server';
 import { computeCost } from '~/lib/.server/llm/model-pricing';
 import { getLiveModelRate } from '~/lib/.server/llm/live-pricing.server';
 import { resolveImageQueries } from '~/lib/.server/images/resolve-image-query.server';
+import { resolveFalKey } from '~/lib/.server/images/fal.server';
+import { asksForGeneratedImages, ENHANCER_IMAGE_INSTRUCTIONS } from '~/utils/reference-assets';
 
 export async function action(args: ActionFunctionArgs) {
   return enhancerAction(args);
@@ -99,6 +101,9 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
     .filter((image) => typeof image === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(image))
     .slice(0, MAX_REFERENCE_IMAGES);
 
+  // With a fal.ai key the refiner also proposes background/photo images (approved in the client first).
+  const canGenerateImages = !!(await resolveFalKey(request, env));
+
   const promptText =
     `[Model: ${model}]\n\n[Provider: ${providerName}]\n\n` +
     stripIndents`
@@ -113,7 +118,13 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
       ${message}
     </original_prompt>
   ` +
-    (referenceImages.length ? `\n\n${REFERENCE_IMAGE_INSTRUCTIONS}${referenceNote ? `\n\n${referenceNote}` : ''}` : '');
+    (referenceImages.length
+      ? `\n\n${REFERENCE_IMAGE_INSTRUCTIONS}${referenceNote ? `\n\n${referenceNote}` : ''}`
+      : '') +
+    (canGenerateImages ? `\n\n${ENHANCER_IMAGE_INSTRUCTIONS}` : '') +
+    (canGenerateImages && asksForGeneratedImages(message)
+      ? '\n\nThe user explicitly asked for AI-generated images: the block must list at least one image (the hero background at minimum), plus every image they named.'
+      : '');
 
   try {
     const result = await streamText({

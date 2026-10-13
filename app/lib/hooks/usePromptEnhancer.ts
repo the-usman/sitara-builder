@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { toast } from 'react-toastify';
 import type { ProviderInfo } from '~/types/model';
 import { createScopedLogger } from '~/utils/logger';
+import { extractEnhancerImagePlan, stripEnhancerImagePlan, type ProposedAsset } from '~/utils/reference-assets';
 
 const logger = createScopedLogger('usePromptEnhancement');
 
@@ -59,7 +60,7 @@ export function usePromptEnhancer() {
       images?: string[];
       referenceNote?: string;
     },
-  ) => {
+  ): Promise<{ text: string; images: ProposedAsset[] } | undefined> => {
     setEnhancingPrompt(true);
     setPromptEnhanced(false);
 
@@ -94,7 +95,7 @@ export function usePromptEnhancer() {
       setPromptEnhanced(false);
       toast.error('Could not reach the prompt enhancer. Your prompt was left unchanged.');
 
-      return;
+      return undefined;
     }
 
     const reader = response.body?.getReader();
@@ -109,7 +110,7 @@ export function usePromptEnhancer() {
           : 'Prompt enhancement failed. Your prompt was left unchanged.',
       );
 
-      return;
+      return undefined;
     }
 
     const decoder = new TextDecoder();
@@ -132,34 +133,40 @@ export function usePromptEnhancer() {
 
         logger.trace('Set input', _input);
 
-        setInput(_input);
+        // the proposed-images block is for the approval dialog, not the textarea
+        setInput(stripEnhancerImagePlan(_input));
       }
 
       _input += decoder.decode();
     } catch (error) {
       _error = error;
-    } finally {
-      setEnhancingPrompt(false);
-
-      const enhanced = cleanEnhancedPrompt(_input);
-
-      if (_error || enhanced.length === 0) {
-        if (_error) {
-          logger.error(_error);
-        }
-
-        // Never leave the user with a truncated/empty prompt — restore what they typed
-        setInput(originalInput);
-        setPromptEnhanced(false);
-        toast.error('Prompt enhancement failed. Your original prompt was restored.');
-      } else {
-        setPromptEnhanced(true);
-
-        setTimeout(() => {
-          setInput(enhanced);
-        });
-      }
     }
+
+    setEnhancingPrompt(false);
+
+    const { text: enhanced, images } = extractEnhancerImagePlan(cleanEnhancedPrompt(_input));
+
+    if (_error || enhanced.length === 0) {
+      if (_error) {
+        logger.error(_error);
+      }
+
+      // Never leave the user with a truncated/empty prompt — restore what they typed
+      setInput(originalInput);
+      setPromptEnhanced(false);
+      toast.error('Prompt enhancement failed. Your original prompt was restored.');
+
+      return undefined;
+    }
+
+    setPromptEnhanced(true);
+    toast.success('Prompt enhanced!');
+
+    setTimeout(() => {
+      setInput(enhanced);
+    });
+
+    return { text: enhanced, images };
   };
 
   return { enhancingPrompt, promptEnhanced, enhancePrompt, resetEnhancer };

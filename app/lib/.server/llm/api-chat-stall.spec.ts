@@ -54,11 +54,11 @@ vi.mock('~/lib/config/app-config.server', () => ({ readAppConfig: async () => ({
 vi.mock('~/lib/.server/llm/live-pricing.server', () => ({ getLiveModelRate: async () => undefined }));
 vi.mock('~/lib/project-tracker.server', () => ({ upsertProject: async () => undefined }));
 
-let action: typeof import('./api.chat').action;
+let action: typeof import('~/routes/api.chat').action;
 
 // Loading the route registers every LLM provider, which is slow — keep it out of the test timeouts.
 beforeAll(async () => {
-  ({ action } = await import('./api.chat'));
+  ({ action } = await import('~/routes/api.chat'));
 }, 60_000);
 
 async function chat() {

@@ -10,6 +10,7 @@ export const internetAssetsSkill: PromptSkill = {
   body: () => `
 <internet_assets>
   When generating ANY website or landing page, use real internet images and interactive 3D models automatically — never use placeholder images or leave image slots empty.
+  Exception: if the message lists AI-generated images (/generated/…), those fill their slots — use stock photos only for slots they don't cover.
 
   ## Real Images via Unsplash (No API Key Needed)
 

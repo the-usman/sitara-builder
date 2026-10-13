@@ -33,6 +33,15 @@ import { ChatLoadingScreen } from './ChatLoadingScreen';
 import { describeReferences, prepareReferenceImage, type PreparedReference } from '~/utils/reference-image';
 import { pendingChatPrompt, withSelectedElementContext } from '~/lib/stores/visual-edit';
 import { buildEditRetryMessage, EDIT_RETRY_MARKER, failedEdits } from '~/lib/stores/failed-edits';
+import {
+  offerReferenceAssets,
+  referenceAssets,
+  reviewProposedAssets,
+  warnIfImageGenerationOff,
+} from '~/lib/stores/reference-assets';
+import { asksForGeneratedImages } from '~/utils/reference-assets';
+import { GENERATED_IMAGES_NOTE } from '~/lib/common/prompts/skills/generated-images';
+import { ReferenceAssetsDialog } from './ReferenceAssetsDialog';
 import { WORK_DIR } from '~/utils/constants';
 
 // Automatic "your edit didn't apply" round-trips per user message (see failed-edits.ts).
@@ -498,6 +507,9 @@ export const ChatImpl = memo(
      * so a model that keeps missing can't loop forever. A short delay lets queued actions finish.
      */
     const editRetriesRef = useRef(0);
+
+    // The enhancer already asked about generated images for this draft — don't ask again on send.
+    const imagesReviewedRef = useRef(false);
     const sendMessageRef = useRef<(event: React.UIEvent, messageInput?: string) => Promise<void>>();
     const pendingFailedEdits = useStore(failedEdits);
 
@@ -571,6 +583,11 @@ export const ChatImpl = memo(
         return;
       }
 
+      // The reference-images dialog is still open for the previous send.
+      if (referenceAssets.get()) {
+        return;
+      }
+
       const isEditRetry = messageContent.startsWith(EDIT_RETRY_MARKER);
 
       // Edits that failed in the previous response are either being retried now or superseded.
@@ -594,7 +611,25 @@ export const ChatImpl = memo(
       runAnimation();
 
       // Reference images: overview + detail slices for tall screenshots, plus sampled colors.
-      const { parts: visionParts, note: referenceNote } = await buildVisionParts(uploadedFiles, imageDataList);
+      const { parts: visionParts, note: visionNote } = await buildVisionParts(uploadedFiles, imageDataList);
+
+      /*
+       * With a fal.ai key: offer to generate the reference's backgrounds/photos first (or, without a
+       * reference, the images the message asks for) — the user approves them in ReferenceAssetsDialog,
+       * and the build is told where they were saved (which loads the generated-images skill).
+       */
+      const wantsImages =
+        !isEditRetry &&
+        !imagesReviewedRef.current &&
+        !messageContent.includes(GENERATED_IMAGES_NOTE) &&
+        (visionParts.length > 0 || asksForGeneratedImages(messageContent));
+      const generatedAssetsNote = wantsImages
+        ? await offerReferenceAssets({ image: visionParts[0]?.image, message: messageContent, model, provider })
+        : '';
+
+      imagesReviewedRef.current = false;
+
+      const referenceNote = visionNote + generatedAssetsNote;
 
       if (!chatStarted) {
         setFakeLoading(true);
@@ -902,6 +937,7 @@ export const ChatImpl = memo(
           onDecode={dismissDecodePrompt}
           onDismiss={dismissDecodePrompt}
         />
+        <ReferenceAssetsDialog />
         <BaseChat
           ref={animationScope}
           textareaRef={textareaRef}
@@ -949,10 +985,14 @@ export const ChatImpl = memo(
               pendingMessageIdRef.current = generateId();
             }
 
+            if (asksForGeneratedImages(input)) {
+              void warnIfImageGenerationOff();
+            }
+
             // The refiner sees the same prepared reference images the generator will get.
             const { parts: referenceParts, note: referenceNote } = await buildVisionParts(uploadedFiles, imageDataList);
 
-            await enhancePrompt(
+            const enhanced = await enhancePrompt(
               input,
               (input) => {
                 setInput(input);
@@ -970,6 +1010,20 @@ export const ChatImpl = memo(
                 referenceNote,
               },
             );
+
+            /*
+             * With a fal.ai key the enhancer also picks sections that deserve a generated background or
+             * photo. Ask first; approved images are saved to public/generated/ and listed in the prompt.
+             */
+            if (enhanced?.images.length) {
+              const note = await reviewProposedAssets(enhanced.images);
+              imagesReviewedRef.current = true;
+
+              if (note) {
+                setInput(enhanced.text + note);
+                scrollTextArea();
+              }
+            }
           }}
           uploadedFiles={uploadedFiles}
           setUploadedFiles={setUploadedFiles}

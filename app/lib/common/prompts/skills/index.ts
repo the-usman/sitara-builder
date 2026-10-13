@@ -8,6 +8,7 @@ import { fullstackSkill } from './fullstack';
 import { mobileAppSkill } from './mobile-app';
 import { cavemanSkill } from './caveman';
 import { designReferenceSkill } from './design-reference';
+import { generatedImagesSkill } from './generated-images';
 
 export type { PromptSkill, SkillContext } from './types';
 
@@ -25,6 +26,7 @@ export const promptSkills: PromptSkill[] = [
   mobileAppSkill,
   cavemanSkill,
   designReferenceSkill,
+  generatedImagesSkill,
 ];
 
 /**

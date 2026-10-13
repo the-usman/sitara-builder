@@ -770,10 +770,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                           title="Enhance prompt"
                           disabled={(input.length === 0 && !imageDataList?.some(Boolean)) || enhancingPrompt}
                           className={classNames('transition-all', enhancingPrompt ? 'opacity-100' : '')}
-                          onClick={() => {
-                            enhancePrompt?.();
-                            toast.success('Prompt enhanced!');
-                          }}
+                          onClick={() => enhancePrompt?.()}
                         >
                           {enhancingPrompt ? (
                             <div className="i-svg-spinners:90-ring-with-bg text-bolt-elements-loader-progress text-xl animate-spin"></div>

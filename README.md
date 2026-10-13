@@ -1,10 +1,32 @@
 # Sitara Builder
 
-**Sitara Builder** is a fork of [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) — an AI-powered full-stack web development platform built on top of WebContainers. Sitara Builder extends the original with a rich set of production-ready skills, UI/UX intelligence, and full-stack scaffolding capabilities.
+**Sitara Builder** is a customized fork of the open-source [bolt.diy](https://github.com/stackblitz-labs/bolt.diy) — an AI-powered full-stack web development platform. Sitara Builder extends the original with its own authentication and database, operator access management, a skills system, a customized system prompt, strong animation and 3D capabilities, and a server-side sandbox runtime.
 
 ---
 
 ## What's New in Sitara Builder
+
+### Sandbox Moved Out of the Browser (Vercel Sandbox)
+The original bolt.diy runs every project inside the user's browser via WebContainers, which can make the tab slow, laggy, or unresponsive on larger projects. Sitara Builder moves this execution to a remote sandbox (Vercel Sandbox):
+- Installs, builds, and dev servers run on the server, not in the user's browser
+- The browser only renders the editor and a live preview of the remote sandbox
+- Faster builds and no browser freezes or lag, even on low-end machines
+
+### Authentication & Our Own Database
+- Custom login/authentication integrated with our own database
+- Connected to our other internal services
+- Provider keys and configuration are managed securely on the server
+
+### Operator Access Management
+- Admins can manage operators and control what each operator can access
+- Centralized admin configuration for managed connections and settings
+
+### Skills System
+- A dedicated skills section where new skills can be added to the AI builder
+- Skills are injected into the AI's prompt so it follows proven patterns for each task (design, animation, 3D, full-stack, images, and more)
+
+### Customized System Prompt
+- The system prompt has been rewritten so the AI reliably produces correct actions (file writes, shell commands, previews) and actionable results, not just text
 
 ### 1. UI/UX Design Intelligence
 The AI now produces visually polished, production-quality interfaces by default:

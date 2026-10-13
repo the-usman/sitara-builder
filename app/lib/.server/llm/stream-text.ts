@@ -117,6 +117,20 @@ export async function streamText(props: {
 
   const dynamicMaxTokens = modelDetails && modelDetails.maxTokenAllowed ? modelDetails.maxTokenAllowed : MAX_TOKENS;
 
+  /*
+   * A caller with its own system prompt (the prompt enhancer) replaces the builder prompt anyway:
+   * skip the skill router — an extra call to the same, possibly slow, model before the answer
+   * even starts — and the prompt assembly.
+   */
+  if (options?.system) {
+    return await _streamText({
+      model: provider.getModelInstance({ model: modelDetails.name, serverEnv, apiKeys, providerSettings }),
+      maxTokens: dynamicMaxTokens,
+      messages: convertToCoreMessages(limitMessages(processedMessages as any) as any),
+      ...options,
+    });
+  }
+
   // Admin-imported skills + disabled built-ins from MongoDB (cached 60s) — never block the chat on a DB failure
   let customSkills: PromptSkill[] = [];
   let disabledSkills: string[] = [];

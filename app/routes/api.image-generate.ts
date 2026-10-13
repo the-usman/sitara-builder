@@ -1,5 +1,6 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { getApiKeysFromCookie } from '~/lib/api/cookies';
+import { resolveFalKey } from '~/lib/.server/images/fal.server';
 
 type Provider = 'openai' | 'fal' | 'gemini';
 
@@ -45,7 +46,17 @@ export async function action({ context, request }: ActionFunctionArgs) {
       .slice(0, 40) + '.png';
 
   if (provider === 'fal') {
-    return await generateWithFal({ prompt, size, model: model || 'fal-ai/flux/schnell', apiKeys, env, slug });
+    // Same key lookup as the reference-image flow: settings cookie, admin config, or env.
+    const falKey = await resolveFalKey(request, env);
+
+    return await generateWithFal({
+      prompt,
+      size,
+      model: model || 'fal-ai/flux/schnell',
+      apiKeys: { ...apiKeys, ...(falKey ? { FAL_KEY: falKey } : {}) },
+      env,
+      slug,
+    });
   }
 
   if (provider === 'gemini') {

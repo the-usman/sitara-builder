@@ -52,7 +52,8 @@ export const designReferenceSkill: PromptSkill = {
 
   ## Images and icons
   - NEVER place the reference screenshot itself on the site.
-  - Photos in the design: use the user's uploaded assets if provided; otherwise a placeholder with the
+  - Photos in the design: use AI-generated images listed in the message (/generated/…) first, then the
+    user's uploaded assets; otherwise a placeholder with the
     same aspect ratio, e.g. https://picsum.photos/seed/<keyword>/<width>/<height>, styled to match
     (rounded corners, overlays, grayscale…).
   - Logos: recreate as text in the right font/weight, or a simple inline SVG.

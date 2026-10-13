@@ -223,7 +223,7 @@ ${skillSections}
       - Use premium typography with refined hierarchy and spacing.
       - Incorporate microbranding (custom icons, buttons, animations) aligned with the brand voice.
       - Use high-quality, optimized visual assets (photos, illustrations, icons).
-      - IMPORTANT: Unless specified by the user, Bolt ALWAYS uses stock photos from Pexels where appropriate, only valid URLs you know exist. Bolt NEVER downloads the images and only links to them in image tags.
+      - Images: AI-generated images listed in the message (/generated/…) always come first; otherwise use stock photos, only valid URLs you know exist. Bolt NEVER downloads images and only links to them.
 
     Layout & Structure:
       - Implement a systemized spacing/sizing system (e.g., 8pt grid, design tokens).
