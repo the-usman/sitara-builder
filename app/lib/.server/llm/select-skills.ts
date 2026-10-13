@@ -38,7 +38,7 @@ export async function selectSkillsViaLLM(props: {
     const result = await generateText({
       model,
       maxTokens: 120,
-      temperature: 0,
+      temperature: 1,
 
       // The router runs before the answer starts streaming — never let it hold the response up.
       abortSignal: AbortSignal.timeout(ROUTER_TIMEOUT_MS),

@@ -36,7 +36,7 @@ Include ONLY photographic or illustrated imagery that cannot be made with CSS: h
 Do NOT include: logos, icons, UI screenshots or dashboards (those are built in code), plain colors, gradients, simple patterns, text, avatars of real people, or anything already covered by another item.
 If the screenshot has no such imagery (for example a plain UI, a dashboard, or a bug screenshot), return an empty list.
 
-For each image, write a detailed generation prompt (40-80 words) that reproduces what is in the reference: subject, composition and framing, camera angle, lighting, mood, color palette (name the dominant colors, with hex codes where you can read them), style (photo, 3D render, illustration, abstract). Never include text, words, letters, logos or UI in the image prompt — say "no text". For backgrounds that have content laid over them, keep the area where the text sits calm and uncluttered and say where.
+For each image, write a detailed generation prompt (40-80 words) that reproduces what is in the reference: subject, composition and framing, camera angle, lighting, mood, color palette (name the dominant colors, with hex codes where you can read them), style (photo, 3D render, illustration, abstract). Never include text, words, letters, logos or UI in the image prompt — say "no text". For backgrounds that have content laid over them, keep the area where the text sits calm and uncluttered and say where. The reference screenshot itself is also passed to the image model (image-to-image), so describe the specific photo/artwork region to isolate — do not describe the whole page UI.
 
 Reply with ONLY JSON, no other text:
 {"images":[{"name":"hero-background","purpose":"Hero section background","prompt":"...","size":"1792x1024"}]}
@@ -49,12 +49,14 @@ Reply with ONLY JSON, no other text:
  */
 export const ENHANCER_IMAGES_TAG = 'generated_images';
 
-export const ENHANCER_IMAGE_INSTRUCTIONS = `AI IMAGE GENERATION IS AVAILABLE for this project (fal.ai). Besides the refined prompt, decide which parts of the site should use a custom generated image instead of a stock photo — most often the hero background, and section backgrounds, banners or large feature photos where a bespoke image clearly lifts the design. If reference images are attached, pick the imagery they show (backgrounds, photos, artwork) so the generated images match them.
+export const ENHANCER_IMAGE_INSTRUCTIONS = `AI IMAGE GENERATION IS AVAILABLE for this project (fal.ai). Do NOT rely on Unsplash, Pexels, source.unsplash.com, or other stock-photo platforms for hero/section backgrounds or large feature photos — those will be AI-generated instead. Besides the refined prompt, decide which parts of the site need a custom generated image — most often the hero background, and section backgrounds, banners or large feature photos where a bespoke image clearly lifts the design. If reference images are attached, pick the imagery they show (backgrounds, photos, artwork) so the generated images match them; the uploaded reference will be passed to the image model as an image-to-image guide.
 Only raster imagery that CSS cannot make: no logos, icons, UI screenshots, plain colors, gradients, simple patterns, text, or real people's faces. Prefer fewer, high-impact images (usually 1-3, never more than ${MAX_PROPOSED_ASSETS}). If nothing benefits from one, use an empty list.
+
+In the refined prompt's IMAGE REQUIREMENTS / IMAGE STRATEGY sections: describe each image's purpose, aspect ratio, treatment and mood in prose. Do NOT write \`Unsplash query: "..."\` lines for images that will be generated (list those in the block below instead). Unsplash queries are only acceptable for minor slots you intentionally leave as stock (e.g. tiny avatars) when generation is not worth it.
 
 After the refined prompt, on its own lines at the very end, output EXACTLY this block and nothing after it:
 <${ENHANCER_IMAGES_TAG}>{"images":[{"name":"hero-background","purpose":"Hero section background","prompt":"...","size":"1792x1024"}]}</${ENHANCER_IMAGES_TAG}>
-Each "prompt" is a detailed 40-80 word image-generation prompt: subject, composition, camera angle, lighting, mood, color palette with hex codes matching the site's palette, style (photo, 3D render, illustration, abstract), and "no text". For backgrounds with content over them, keep the area behind the text calm and say where it is.
+Each "prompt" is a detailed 40-80 word image-generation prompt: subject, composition, camera angle, lighting, mood, color palette with hex codes matching the site's palette, style (photo, 3D render, illustration, abstract), and "no text". For backgrounds with content over them, keep the area behind the text calm and say where it is. When a reference is attached, describe the specific region to recreate (not the whole page chrome).
 "size" is one of "1792x1024" (wide backgrounds, banners), "1365x1024" (landscape photos), "1024x1024" (square), "1024x1792" (tall/portrait).
 The user approves these images before they are generated, so the refined prompt itself must still work without them: keep the normal image instructions there and do not mention this block or /generated/ paths.`;
 

@@ -18,6 +18,7 @@ import {
  *   POST { op: 'plan' }  → { images }   the AI's proposal, for the user to approve — from the
  *                                       reference image, or from the request alone without one
  *   POST { op: 'generate' } → { imageData } one approved image, base64 PNG
+ *                           optional body.image (data URL) → Flux image-to-image from the reference
  */
 
 const logger = createScopedLogger('api.reference-assets');
@@ -53,11 +54,19 @@ export async function action({ context, request }: ActionFunctionArgs) {
       return json({ error: 'A prompt is required.' }, 400);
     }
 
+    const referenceImage =
+      typeof body.image === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(body.image)
+        ? body.image
+        : typeof body.image === 'string' && /^https?:\/\//.test(body.image)
+          ? body.image
+          : undefined;
+
     try {
       const imageData = await generateFalImage({
         falKey,
         prompt: body.prompt,
         size: body.size in ASSET_SIZES ? body.size : '1792x1024',
+        imageUrl: referenceImage,
       });
 
       return json({ imageData });

@@ -42,7 +42,7 @@ Every refined prompt you produce must specify this stack:
 - **Backend/Database:** Supabase (Auth, PostgreSQL DB, Storage, Edge Functions, Realtime where needed) — **only when the SCOPE decision above is full-stack.** Omit entirely for a frontend-only build; do not mention Supabase, auth, or a database anywhere in a frontend-only refined prompt.
 - **Animations:** GSAP (ScrollTrigger, SplitText, Flip, MorphSVG), Framer Motion, CSS keyframes
 - **3D Elements:** Three.js / React Three Fiber / Drei (where appropriate to the business type)
-- **Images:** Unsplash API for hero images, section backgrounds, team photos, and gallery content. Use Pexels API as fallback. All images must be contextually relevant, high-resolution, and lazy-loaded with blur placeholders.
+- **Images:** Prefer AI-generated images (fal.ai) for hero/section backgrounds and large feature photos when the enhancer instructions say generation is available — especially when the user attached a reference screenshot (that reference is passed to the image model). Otherwise Unsplash/Pexels for stock. All images must be contextually relevant, high-resolution, and lazy-loaded with blur placeholders.
 - **Icons:** Lucide React or Heroicons
 - **Fonts:** Google Fonts (select fonts that match the brand personality)
 - **Deployment-ready:** Output must work on Vercel or any Node.js hosting
@@ -152,13 +152,17 @@ Be specific about animations. Every section should have intentional motion:
 
 For every image placement, specify:
 
-- **Unsplash search query** (e.g. "modern apartment interior", "professional landlord office", "happy tenants moving in")
+- **Subject & mood** (framing, light, palette) — enough detail to generate or search the photo
 - **Aspect ratio and size** (hero: 16:9, card thumbnail: 4:3, avatar: 1:1)
 - **Treatment:** Raw, with overlay gradient, with blur background, duotone filter, rounded corners, masked shape
 - **Loading:** Blur hash placeholder, lazy loading, progressive loading
 - **Fallback:** Gradient or solid color fallback if image fails
 
-#### MANDATORY: Image query format (machine-verified — do not deviate)
+#### When AI image generation is available (see enhancer override instructions)
+
+Hero backgrounds, section backgrounds, banners and large feature photos should be listed in the \`<generated_images>\` block — not as Unsplash queries. If a reference screenshot is attached, describe the specific photo/artwork regions so fal.ai can recreate them (the reference is also passed as an image-to-image guide). In IMAGE REQUIREMENTS, use prose for those slots.
+
+#### When AI generation is NOT available: Unsplash query format (machine-verified)
 
 You do not have live internet access. A separate automated step reads your output afterward, searches the real Unsplash/Pexels APIs for each query you write, and swaps in the real, currently-working photo URL before this prompt reaches the generator — this is what keeps generated sites from shipping broken/404 image links.
 
@@ -268,7 +272,7 @@ Every refined prompt must specify at least four of the following, chosen to fit 
 ### Content realism
 
 - All names, addresses, prices, dates, and testimonials must be realistic and specific to the business location and industry. If the business is a landlord in Melbourne, use real suburb names and realistic AUD rent figures.
-- Imagery must be shot-specific, not stock-generic. Specify the framing, light, and mood in the Unsplash query. "Terrace house facade, overcast light, straight-on architectural framing" beats "house".
+- Imagery must be shot-specific, not stock-generic. Specify framing, light, and mood in the generation prompt or Unsplash query. "Terrace house facade, overcast light, straight-on architectural framing" beats "house".
 - Vary photographic treatment across the site. Do not apply the same overlay to every image.
 
 ### Self-check before output
@@ -451,7 +455,7 @@ Your refined prompt must follow this exact structure. Start with the one-line sc
 [Section-by-section GSAP/3D/micro-interaction specifications]
 
 ## IMAGE REQUIREMENTS
-[Per-section Unsplash queries, treatments, sizes]
+[Per-section purpose, treatment, sizes; Unsplash queries only when AI generation is off / for minor leftover slots]
 
 ## SUPABASE SCHEMA
 [Only include this section for a Full-stack scope. Omit it completely for Frontend-only — do not include the heading at all.]
@@ -479,7 +483,7 @@ Your refined prompt must follow this exact structure. Start with the one-line sc
 2b. **Never let it look AI-generated.** This overrides everything else. A unique palette, an unusual font pairing, and a non-centered hero are the three fastest ways to break out of the default look. Do all three every time.
 3. **Always be functional.** Pretty is not enough. Every form must validate, every button must do something, every page must have a purpose.
 4. **Match the industry.** A law firm website should feel different from a skateboard shop. Adapt design, animations, and tone accordingly.
-5. **Unsplash queries must be specific and in the mandatory \`Unsplash query: "..."\` form.** Not "business" but "diverse team meeting in modern glass office warm lighting." Never write your own image URL — see IMAGE STRATEGY.
+5. **Imagery must be specific.** When AI generation is available, put primary photos in the \`<generated_images>\` block. Otherwise Unsplash queries must use the mandatory \`Unsplash query: "..."\` form — not "business" but "diverse team meeting in modern glass office warm lighting." Never write your own image URL — see IMAGE STRATEGY.
 6. **GSAP is mandatory.** Every page must have scroll-triggered animations. No static pages.
 7. **Frontend-only by default; Supabase only when explicitly requested.** See SCOPE above. Do not add a backend, a database, or an admin dashboard because the business type "would normally have one" — only because the user asked for it.
 8. **3D is optional but encouraged.** Use it when it adds value (real estate: 3D house, tech: floating geometric shapes, food: rotating dish). Skip it when it would feel forced.

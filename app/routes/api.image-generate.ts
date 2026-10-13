@@ -1,14 +1,8 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { getApiKeysFromCookie } from '~/lib/api/cookies';
-import { resolveFalKey } from '~/lib/.server/images/fal.server';
+import { generateFalImage, resolveFalKey } from '~/lib/.server/images/fal.server';
 
 type Provider = 'openai' | 'fal' | 'gemini';
-
-const SIZE_TO_FAL: Record<string, string> = {
-  '1024x1024': 'square',
-  '1792x1024': 'landscape_16_9',
-  '1024x1792': 'portrait_16_9',
-};
 
 const SIZE_TO_GEMINI: Record<string, string> = {
   '1024x1024': '1:1',
@@ -46,17 +40,28 @@ export async function action({ context, request }: ActionFunctionArgs) {
       .slice(0, 40) + '.png';
 
   if (provider === 'fal') {
-    // Same key lookup as the reference-image flow: settings cookie, admin config, or env.
+    // Same key lookup / FLUX.2 models as the reference-image flow.
     const falKey = await resolveFalKey(request, env);
 
-    return await generateWithFal({
-      prompt,
-      size,
-      model: model || 'fal-ai/flux/schnell',
-      apiKeys: { ...apiKeys, ...(falKey ? { FAL_KEY: falKey } : {}) },
-      env,
-      slug,
-    });
+    if (!falKey) {
+      throw new Response('FAL_KEY not configured. Add it in Settings → API Keys.', { status: 401 });
+    }
+
+    try {
+      const imageData = await generateFalImage({
+        falKey,
+        prompt,
+        size,
+        model: model || 'fal-ai/flux-2-max',
+      });
+
+      return new Response(JSON.stringify({ imageData, filename: slug }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'fal.ai generation failed';
+      throw new Response(message, { status: 502 });
+    }
   }
 
   if (provider === 'gemini') {
@@ -64,66 +69,6 @@ export async function action({ context, request }: ActionFunctionArgs) {
   }
 
   return await generateWithOpenAI({ prompt, size, model: model || 'dall-e-3', apiKeys, env, slug });
-}
-
-// ── fal.ai ──────────────────────────────────────────────────────────────────
-
-async function generateWithFal({
-  prompt,
-  size,
-  model,
-  apiKeys,
-  env,
-  slug,
-}: {
-  prompt: string;
-  size: string;
-  model: string;
-  apiKeys: Record<string, string>;
-  env: any;
-  slug: string;
-}) {
-  const falKey = apiKeys?.FAL_KEY || env?.FAL_KEY || process.env.FAL_KEY;
-
-  if (!falKey) {
-    throw new Response('FAL_KEY not configured. Add it in Settings → API Keys.', { status: 401 });
-  }
-
-  const res = await fetch(`https://fal.run/${model}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Key ${falKey}`,
-    },
-    body: JSON.stringify({
-      prompt,
-      image_size: SIZE_TO_FAL[size] ?? 'square',
-      num_inference_steps: model.includes('schnell') ? 4 : 28,
-      num_images: 1,
-      enable_safety_checker: true,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Response((err as any)?.detail || 'fal.ai generation failed', { status: res.status });
-  }
-
-  const data = await res.json();
-  const imageUrl: string = (data as any).images?.[0]?.url;
-
-  if (!imageUrl) {
-    throw new Response('No image returned from fal.ai', { status: 502 });
-  }
-
-  // Download and convert to base64 so the client has a uniform response format
-  const imgRes = await fetch(imageUrl);
-  const buffer = await imgRes.arrayBuffer();
-  const imageData = Buffer.from(buffer).toString('base64');
-
-  return new Response(JSON.stringify({ imageData, filename: slug }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 // ── Google Gemini Imagen 3 ───────────────────────────────────────────────────

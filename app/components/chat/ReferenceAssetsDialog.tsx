@@ -52,8 +52,9 @@ export function ReferenceAssetsDialog() {
                   : fromReference
                     ? 'These images were suggested from your reference.'
                     : 'These images were planned from your request.'}{' '}
-                Untick any you don't want and edit the descriptions — they are generated with fal.ai and saved to{' '}
-                <code>public/generated/</code> for the build to use.
+                Untick any you don't want and edit the descriptions — they are generated with fal.ai
+                {state.referenceImage ? ' (using your uploaded reference as a visual guide)' : ''} and saved to{' '}
+                <code>public/generated/</code> for the build to use instead of stock photos.
               </p>
               <div className="flex flex-col gap-3 overflow-y-auto pr-1">
                 {assets.map((asset) => (

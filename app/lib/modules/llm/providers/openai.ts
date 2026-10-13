@@ -4,6 +4,34 @@ import type { IProviderSetting } from '~/types/model';
 import type { LanguageModelV1 } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 
+/*
+ * Newer OpenAI models (o-series, gpt-5, …) reject `max_tokens` and require
+ * `max_completion_tokens`. Our pinned @ai-sdk/openai only remaps that for o1/o3,
+ * so rewrite the request body for every chat/completions call.
+ */
+function rewriteMaxTokensFetch(baseFetch: typeof fetch = fetch): typeof fetch {
+  return async (input, init) => {
+    if (init?.body && typeof init.body === 'string') {
+      try {
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+
+        if (body.max_tokens != null) {
+          if (body.max_completion_tokens == null) {
+            body.max_completion_tokens = body.max_tokens;
+          }
+
+          delete body.max_tokens;
+          init = { ...init, body: JSON.stringify(body) };
+        }
+      } catch {
+        // leave the body unchanged if it isn't JSON
+      }
+    }
+
+    return baseFetch(input, init);
+  };
+}
+
 export default class OpenAIProvider extends BaseProvider {
   name = 'OpenAI';
   getApiKeyLink = 'https://platform.openai.com/api-keys';
@@ -57,7 +85,8 @@ export default class OpenAIProvider extends BaseProvider {
       name: m.id,
       label: `${m.id}`,
       provider: this.name,
-      maxTokenAllowed: m.context_window || 32000,
+      // Output cap for the request — context_window is the full context, not max output
+      maxTokenAllowed: 32000,
     }));
   }
 
@@ -86,8 +115,37 @@ export default class OpenAIProvider extends BaseProvider {
 
       // 'strict' sends stream_options.include_usage so streaming responses report token usage
       compatibility: 'strict',
+      fetch: rewriteMaxTokensFetch(),
     });
 
-    return openai(model);
+    return wrapOpenAIModel(openai(model));
   }
+}
+
+import { experimental_wrapLanguageModel as wrapLanguageModel, type LanguageModelV1 } from 'ai';
+
+const MODELS_REJECTING_ZERO_TEMPERATURE: RegExp[] = [
+  /^o1(?:-mini|-preview)?\b/,
+  /^o3(?:-mini)?\b/,
+  /^gpt-5\b/,
+];
+
+function rejectsZeroTemperature(modelId: string): boolean {
+  const normalizedId = modelId.toLowerCase();
+  return MODELS_REJECTING_ZERO_TEMPERATURE.some((pattern) => pattern.test(normalizedId));
+}
+
+function wrapOpenAIModel(model: LanguageModelV1): LanguageModelV1 {
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      transformParams: async ({ params }) => {
+        if (params.temperature === 0) {
+          const { temperature: _temperature, ...rest } = params;
+          return { ...rest, temperature: 1 };
+        }
+        return params;
+      },
+    },
+  });
 }

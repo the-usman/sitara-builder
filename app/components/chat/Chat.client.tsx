@@ -1016,7 +1016,8 @@ export const ChatImpl = memo(
              * photo. Ask first; approved images are saved to public/generated/ and listed in the prompt.
              */
             if (enhanced?.images.length) {
-              const note = await reviewProposedAssets(enhanced.images);
+              // Pass the uploaded reference so fal generates via image-to-image, not stock search.
+              const note = await reviewProposedAssets(enhanced.images, referenceParts[0]?.image);
               imagesReviewedRef.current = true;
 
               if (note) {

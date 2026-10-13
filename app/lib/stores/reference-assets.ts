@@ -29,6 +29,9 @@ export interface ReferenceAssetsState {
    * 'enhancer': proposed by the prompt enhancer — approving adds the images to the prompt, it doesn't send
    */
   source?: 'reference' | 'request' | 'enhancer';
+
+  /** Uploaded reference (data URL) passed to fal image-to-image when generating. */
+  referenceImage?: string;
 }
 
 export const referenceAssets = atom<ReferenceAssetsState | null>(null);
@@ -38,7 +41,7 @@ let planAbort: AbortController | undefined;
 let enabled: Promise<boolean> | undefined;
 
 export const NO_FAL_KEY_MESSAGE =
-  "You asked for AI-generated images, but no fal.ai key was found, so stock photos will be used. Add FAL_KEY in the admin API keys or the server's .env, then try again.";
+  "AI image generation needs a fal.ai key. Without it, stock photos will be used instead of generating from your prompt/reference. Add FAL_KEY in the admin API keys or the server's .env, then try again.";
 
 function isEnabled(): Promise<boolean> {
   // Only a "yes" is cached, so a key added later is picked up without a reload.
@@ -100,7 +103,12 @@ export async function offerReferenceAssets(options: {
     finish = resolve;
   });
 
-  referenceAssets.set({ phase: 'planning', assets: [], source: options.image ? 'reference' : 'request' });
+  referenceAssets.set({
+    phase: 'planning',
+    assets: [],
+    source: options.image ? 'reference' : 'request',
+    referenceImage: options.image,
+  });
   planAbort = new AbortController();
 
   fetch('/api/reference-assets', {
@@ -134,7 +142,12 @@ export async function offerReferenceAssets(options: {
         return;
       }
 
-      referenceAssets.set({ phase: 'review', assets: data.images.map((asset) => ({ ...asset, selected: true })) });
+      referenceAssets.set({
+        phase: 'review',
+        source: options.image ? 'reference' : 'request',
+        referenceImage: options.image,
+        assets: data.images.map((asset) => ({ ...asset, selected: true })),
+      });
     })
     .catch(() => {
       // aborted by Skip, or the network failed: build without generated images
@@ -149,8 +162,9 @@ export async function offerReferenceAssets(options: {
 /**
  * The prompt enhancer already proposed the images: go straight to the approval step.
  * Resolves with the note to append to the prompt ('' when skipped or nothing was generated).
+ * Pass `referenceImage` when the user uploaded a design reference so fal can image-to-image from it.
  */
-export function reviewProposedAssets(images: ProposedAsset[]): Promise<string> {
+export function reviewProposedAssets(images: ProposedAsset[], referenceImage?: string): Promise<string> {
   if (finish || !images.length) {
     return Promise.resolve('');
   }
@@ -162,6 +176,7 @@ export function reviewProposedAssets(images: ProposedAsset[]): Promise<string> {
   referenceAssets.set({
     phase: 'review',
     source: 'enhancer',
+    referenceImage,
     assets: images.map((asset) => ({ ...asset, selected: true })),
   });
 
@@ -183,14 +198,19 @@ export function updateReviewAsset(name: string, change: Partial<ReviewAsset>) {
   }
 }
 
-async function generateOne(asset: ReviewAsset): Promise<boolean> {
+async function generateOne(asset: ReviewAsset, referenceImage?: string): Promise<boolean> {
   updateReviewAsset(asset.name, { status: 'generating', error: undefined });
 
   try {
     const res = await fetch('/api/reference-assets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op: 'generate', prompt: asset.prompt, size: asset.size }),
+      body: JSON.stringify({
+        op: 'generate',
+        prompt: asset.prompt,
+        size: asset.size,
+        ...(referenceImage ? { image: referenceImage } : {}),
+      }),
     });
     const data = (await res.json().catch(() => ({}))) as { imageData?: string; error?: string };
 
@@ -226,7 +246,7 @@ export async function generateApprovedAssets() {
 
   referenceAssets.set({ ...state, phase: 'generating' });
 
-  const results = await Promise.all(approved.map(generateOne));
+  const results = await Promise.all(approved.map((asset) => generateOne(asset, state.referenceImage)));
   const generated = approved.filter((_, index) => results[index]);
   const failed = approved.length - generated.length;
 

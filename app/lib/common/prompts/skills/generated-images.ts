@@ -21,6 +21,8 @@ export const generatedImagesSkill: PromptSkill = {
   Rules (these override the stock-photo, Unsplash, Pexels and picsum guidance elsewhere):
   - Put every listed image where its purpose says (hero background, section background, feature
     photo…). Use the exact URL, e.g. "/generated/hero-background.png". Do not rename or move files.
+  - When a design reference was uploaded, these files were generated from that reference
+    (image-to-image) — treat them as the authoritative match for the photos/artwork in the design.
   - Never replace a generated image with a stock photo, an Unsplash/Pexels/picsum URL or a gradient.
     Do not search for or link other photos for those spots. Stock photos are only acceptable for
     other image slots the list does not cover.

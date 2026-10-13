@@ -40,8 +40,17 @@ const REFERENCE_IMAGE_INSTRUCTIONS = stripIndents`
   - Describe every visible section top to bottom: its layout (columns, alignment, image placement), its content (headings, copy, buttons, cards, counts), and its notable styling. Copy visible text verbatim where readable.
   - Give concrete values: hex colors (prefer the sampled colors listed below), font character (serif/sans, weight, approximate sizes), spacing (tight/airy, approximate px), border radius, button styles.
   - If the user asks for changes relative to the reference, apply them and say exactly what differs from the reference.
-  - For photos visible in the reference, write an Unsplash query that matches that photo's subject, framing, and mood.
+  - For photos/artwork visible in the reference: do NOT write Unsplash/Pexels queries for them when AI image generation is available — list them in the <generated_images> block so they are recreated with fal.ai (the reference screenshot is also passed to the image model as an image-to-image guide). Describe subject, framing, lighting, palette and mood in each generation prompt.
   - Include a line telling the generator: "Match the attached reference images closely — they are the source of truth for layout and styling."
+`;
+
+/** Overrides the refiner's stock Unsplash IMAGE STRATEGY when fal.ai can generate assets instead. */
+const GENERATED_IMAGE_STRATEGY_OVERRIDE = stripIndents`
+  IMAGE STRATEGY OVERRIDE (AI generation is configured for this project):
+  - Prefer AI-generated images over Unsplash/Pexels/stock for hero backgrounds, section backgrounds, banners and large feature photos.
+  - Do NOT write \`Unsplash query: "..."\` for those primary images — put them in the <generated_images> block at the end instead.
+  - In IMAGE REQUIREMENTS, describe purpose, aspect ratio, treatment and mood in prose (the build will use /generated/… paths after the user approves generation).
+  - Stock Unsplash queries are only for minor leftover slots (tiny avatars, optional fillers) that are not worth a dedicated generation.
 `;
 
 function extractImageQueries(text: string): string[] {
@@ -121,9 +130,14 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
     (referenceImages.length
       ? `\n\n${REFERENCE_IMAGE_INSTRUCTIONS}${referenceNote ? `\n\n${referenceNote}` : ''}`
       : '') +
-    (canGenerateImages ? `\n\n${ENHANCER_IMAGE_INSTRUCTIONS}` : '') +
-    (canGenerateImages && asksForGeneratedImages(message)
-      ? '\n\nThe user explicitly asked for AI-generated images: the block must list at least one image (the hero background at minimum), plus every image they named.'
+    (canGenerateImages ? `\n\n${GENERATED_IMAGE_STRATEGY_OVERRIDE}\n\n${ENHANCER_IMAGE_INSTRUCTIONS}` : '') +
+    (canGenerateImages && (asksForGeneratedImages(message) || referenceImages.length > 0)
+      ? '\n\nThe block must list at least one image (the hero background at minimum)' +
+        (asksForGeneratedImages(message) ? ', plus every image the user named' : '') +
+        (referenceImages.length
+          ? ', plus every photographic/illustrated background or feature image visible in the attached reference'
+          : '') +
+        '.'
       : '');
 
   try {
@@ -255,31 +269,37 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
           return;
         }
 
-        try {
-          const queries = extractImageQueries(bufferedChunks.join(''));
+        /*
+         * When fal.ai is available, primary imagery is AI-generated (approved in the client) —
+         * skip Unsplash/Pexels lookup. Only resolve leftover stock queries when generation is off.
+         */
+        if (!canGenerateImages) {
+          try {
+            const queries = extractImageQueries(bufferedChunks.join(''));
 
-          if (queries.length > 0) {
-            const resolved = await resolveImageQueries(
-              queries,
-              context.cloudflare?.env as unknown as Record<string, string>,
-              apiKeys,
-            );
+            if (queries.length > 0) {
+              const resolved = await resolveImageQueries(
+                queries,
+                context.cloudflare?.env as unknown as Record<string, string>,
+                apiKeys,
+              );
 
-            const lines = queries.map((query) => {
-              const url = resolved.get(query);
-              return url
-                ? `- "${query}" → ${url}`
-                : `- "${query}" → [no verified photo found — use a solid-color or gradient placeholder here instead of a photo URL, do not invent a link]`;
-            });
+              const lines = queries.map((query) => {
+                const url = resolved.get(query);
+                return url
+                  ? `- "${query}" → ${url}`
+                  : `- "${query}" → [no verified photo found — use a solid-color or gradient placeholder here instead of a photo URL, do not invent a link]`;
+              });
 
-            controller.enqueue(
-              encoder.encode(
-                `\n\n---\n\n## VERIFIED IMAGE URLS (real, working links — use these exact URLs, do not substitute your own)\n\n${lines.join('\n')}\n`,
-              ),
-            );
+              controller.enqueue(
+                encoder.encode(
+                  `\n\n---\n\n## VERIFIED IMAGE URLS (real, working links — use these exact URLs, do not substitute your own)\n\n${lines.join('\n')}\n`,
+                ),
+              );
+            }
+          } catch (error) {
+            logger.error('Image query resolution failed:', String(error));
           }
-        } catch (error) {
-          logger.error('Image query resolution failed:', String(error));
         }
 
         controller.close();

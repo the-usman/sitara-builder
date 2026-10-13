@@ -37,6 +37,15 @@ function createTokenGoFetch(reasoningEffort: string): typeof fetch {
             body.reasoning_effort = reasoningEffort;
           }
 
+          // Newer OpenAI-compatible models reject max_tokens — use max_completion_tokens.
+          if (body.max_tokens != null) {
+            if (body.max_completion_tokens == null) {
+              body.max_completion_tokens = body.max_tokens;
+            }
+
+            delete body.max_tokens;
+          }
+
           init = { ...init, body: JSON.stringify(body) };
         }
       } catch {

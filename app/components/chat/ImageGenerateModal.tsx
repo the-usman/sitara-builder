@@ -17,9 +17,8 @@ const PROVIDERS = [
     keyName: 'FAL_KEY',
     keyLink: 'https://fal.ai/dashboard/keys',
     models: [
-      { id: 'fal-ai/flux/schnell', label: 'Flux Schnell', desc: 'Fastest — 4 steps' },
-      { id: 'fal-ai/flux/dev', label: 'Flux Dev', desc: 'High quality' },
-      { id: 'fal-ai/stable-diffusion-v3-medium', label: 'SD v3 Medium', desc: 'Stable Diffusion 3' },
+      { id: 'fal-ai/flux-2-max', label: 'FLUX.2 Max', desc: 'Highest quality' },
+      { id: 'fal-ai/flux-2-flex', label: 'FLUX.2 Flex', desc: 'Quality / control tradeoff' },
     ],
   },
   {
@@ -79,7 +78,7 @@ export function ImageGenerateModal({
   chatProvider,
 }: Props) {
   const [providerId, setProviderId] = useState<ProviderId>('fal');
-  const [modelId, setModelId] = useState('fal-ai/flux/schnell');
+  const [modelId, setModelId] = useState('fal-ai/flux-2-max');
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('1024x1024');
   const [loading, setLoading] = useState(false);

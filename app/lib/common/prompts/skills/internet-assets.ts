@@ -3,18 +3,22 @@ import type { PromptSkill } from './types';
 export const internetAssetsSkill: PromptSkill = {
   name: 'internet-assets',
   description:
-    'Real internet assets for websites: Unsplash images, icons, logos, fonts — never placeholder images. Use whenever building or extending pages that display images or media.',
+    'Real visual assets for websites: prefer AI-generated images in /generated/, then Unsplash/icons/logos/fonts — never empty placeholders.',
   triggers:
-    /\b(image|images|photo|photos|picture|pictures|unsplash|icon|icons|logo|logos|stock|assets?|avatar|illustration|background image|img)\b/,
+    /\b(image|images|photo|photos|picture|pictures|unsplash|icon|icons|logo|logos|stock|assets?|avatar|illustration|background image|img|generated)\b/,
   defaultOnFirstMessage: true,
   body: () => `
 <internet_assets>
-  When generating ANY website or landing page, use real internet images and interactive 3D models automatically — never use placeholder images or leave image slots empty.
-  Exception: if the message lists AI-generated images (/generated/…), those fill their slots — use stock photos only for slots they don't cover.
+  When generating ANY website or landing page, fill every image slot with a real asset — never leave placeholders empty.
 
-  ## Real Images via Unsplash (No API Key Needed)
+  ## Priority order for photos
+  1. AI-generated files listed in the message under /generated/… (recreated from an uploaded reference when one was provided). Use those exact paths for the listed purposes — never swap them for stock.
+  2. Files the user uploaded into public/.
+  3. Stock photos (Unsplash) only for slots that have no generated/uploaded file.
 
-  Use Unsplash Source URLs directly as \`src\` attributes in \`<img>\` tags or CSS \`background-image\`. They return real high-quality photos matched to the keywords.
+  ## Stock Images via Unsplash (fallback only)
+
+  Use Unsplash Source URLs directly as \`src\` attributes in \`<img>\` tags or CSS \`background-image\` when no /generated/ image covers that slot.
 
   URL format: \`https://source.unsplash.com/{WIDTH}x{HEIGHT}/?{keyword1},{keyword2}&sig={N}\`
 
@@ -158,10 +162,10 @@ export const internetAssetsSkill: PromptSkill = {
 
   ## When to Apply Automatically (No User Prompt Needed)
 
-  ### Always use Unsplash images for:
+  ### Always fill these slots (prefer /generated/ when listed, else Unsplash):
   - Hero section (background or foreground photo)
-  - About / team section (portraits with \`face,portrait,professional\` keywords)
-  - Services / features section (illustrative photos per item, use \`&sig=N\` to vary)
+  - About / team section (portraits with \`face,portrait,professional\` keywords for stock)
+  - Services / features section (illustrative photos per item, use \`&sig=N\` to vary stock)
   - Blog / news card thumbnails
   - Portfolio / project thumbnails
   - Testimonial author avatars

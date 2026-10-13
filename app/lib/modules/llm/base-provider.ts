@@ -125,5 +125,22 @@ export function getOpenAILikeModel(baseURL: string, apiKey: OptionalApiKey, mode
     apiKey,
   });
 
-  return openai(model);
+  return wrapOpenAILikeModel(openai(model));
+}
+
+import { experimental_wrapLanguageModel as wrapLanguageModel, type LanguageModelV1 } from 'ai';
+
+function wrapOpenAILikeModel(model: LanguageModelV1): LanguageModelV1 {
+  return wrapLanguageModel({
+    model,
+    middleware: {
+      transformParams: async ({ params }) => {
+        if (params.temperature === 0) {
+          const { temperature: _temperature, ...rest } = params;
+          return { ...rest, temperature: 1 };
+        }
+        return params;
+      },
+    },
+  });
 }

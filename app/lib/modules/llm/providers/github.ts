@@ -46,6 +46,26 @@ export default class GithubProvider extends BaseProvider {
     const openai = createOpenAI({
       baseURL: 'https://models.inference.ai.azure.com',
       apiKey,
+      fetch: async (input, init) => {
+        if (init?.body && typeof init.body === 'string') {
+          try {
+            const body = JSON.parse(init.body) as Record<string, unknown>;
+
+            if (body.max_tokens != null) {
+              if (body.max_completion_tokens == null) {
+                body.max_completion_tokens = body.max_tokens;
+              }
+
+              delete body.max_tokens;
+              init = { ...init, body: JSON.stringify(body) };
+            }
+          } catch {
+            // leave unchanged
+          }
+        }
+
+        return fetch(input, init);
+      },
     });
 
     return openai(model);
