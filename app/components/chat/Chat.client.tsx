@@ -1013,7 +1013,8 @@ export const ChatImpl = memo(
 
             /*
              * With a fal.ai key the enhancer also picks sections that deserve a generated background or
-             * photo. Ask first; approved images are saved to public/generated/ and listed in the prompt.
+             * photo. Ask first; approved images are hosted (Cloudinary) or saved to public/generated/ and
+             * listed in the prompt.
              */
             if (enhanced?.images.length) {
               // Pass the uploaded reference so fal generates via image-to-image, not stock search.
@@ -1030,6 +1031,10 @@ export const ChatImpl = memo(
           setUploadedFiles={setUploadedFiles}
           imageDataList={imageDataList}
           setImageDataList={setImageDataList}
+          onInsertText={(text) => {
+            setInput(input + text);
+            scrollTextArea();
+          }}
           actionAlert={actionAlert}
           clearAlert={() => workbenchStore.clearAlert()}
           supabaseAlert={supabaseAlert}

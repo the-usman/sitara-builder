@@ -2,8 +2,9 @@ import { GENERATED_IMAGES_NOTE } from '~/lib/common/prompts/skills/generated-ima
 
 /*
  * Images generated with fal.ai to match a reference screenshot (hero/section backgrounds, photos).
- * The AI proposes them from the reference, the user approves them, and they are saved under
- * public/generated/ before the build message goes out (see ReferenceAssetsDialog).
+ * The AI proposes them from the reference, the user approves them, and they are hosted on Cloudinary
+ * (or saved under public/generated/ when Cloudinary isn't configured) before the build message goes
+ * out (see ReferenceAssetsDialog).
  */
 
 export type AssetSize = '1792x1024' | '1024x1024' | '1024x1792' | '1365x1024';
@@ -164,20 +165,23 @@ export function parseAssetPlan(raw: string): ProposedAsset[] {
 }
 
 /** Tells the builder model which generated images exist and where to use them. */
-export function describeGeneratedAssets(assets: Array<Pick<ProposedAsset, 'name' | 'purpose'>>): string {
+export function describeGeneratedAssets(
+  assets: Array<Pick<ProposedAsset, 'name' | 'purpose'> & { url?: string }>,
+): string {
   if (!assets.length) {
     return '';
   }
 
-  const lines = assets.map(
-    (asset) =>
-      `- /${PUBLIC_ASSET_DIR}/${asset.name}.png — ${asset.purpose} (file: public/${PUBLIC_ASSET_DIR}/${asset.name}.png)`,
+  const lines = assets.map((asset) =>
+    asset.url
+      ? `- ${asset.url} — ${asset.purpose}`
+      : `- /${PUBLIC_ASSET_DIR}/${asset.name}.png — ${asset.purpose} (file: public/${PUBLIC_ASSET_DIR}/${asset.name}.png)`,
   );
 
   return (
     `\n\n[${GENERATED_IMAGES_NOTE} — use them,` +
     ' with these exact URLs, for the purpose listed (where the reference shows that imagery, if there is one), ' +
-    'instead of stock photos or placeholders. Backgrounds go in CSS/Tailwind (e.g. bg-[url(/generated/hero-background.png)] bg-cover bg-center) ' +
+    'instead of stock photos or placeholders. Backgrounds go in CSS/Tailwind (e.g. bg-[url(<url>)] bg-cover bg-center) ' +
     'or an <img> with object-cover; add an overlay if text must stay readable.\n' +
     `${lines.join('\n')}]`
   );

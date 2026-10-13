@@ -3,6 +3,8 @@ import { streamText } from '~/lib/.server/llm/stream-text';
 import { getProviderSettingsFromCookie } from '~/lib/api/cookies';
 import { readAppConfig } from '~/lib/config/app-config.server';
 import { generateFalImage, resolveFalKey } from '~/lib/.server/images/fal.server';
+import { requireAuth } from '~/lib/auth.server';
+import { uploadToCloudinary } from '~/lib/cloudinary.server';
 import type { ProviderInfo } from '~/types/model';
 import { createScopedLogger } from '~/utils/logger';
 import {
@@ -29,6 +31,17 @@ const PLAN_TIMEOUT_MS = 150_000;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
+}
+
 export async function loader({ context, request }: LoaderFunctionArgs) {
   const falKey = await resolveFalKey(request, (context as any).cloudflare?.env);
 
@@ -54,6 +67,8 @@ export async function action({ context, request }: ActionFunctionArgs) {
       return json({ error: 'A prompt is required.' }, 400);
     }
 
+    const user = await requireAuth(request, env);
+
     const referenceImage =
       typeof body.image === 'string' && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(body.image)
         ? body.image
@@ -69,7 +84,24 @@ export async function action({ context, request }: ActionFunctionArgs) {
         imageUrl: referenceImage,
       });
 
-      return json({ imageData });
+      /*
+       * Host on Cloudinary and record it so the build references a URL instead of a binary
+       * written into the project. Null when Cloudinary isn't configured — the client then
+       * falls back to saving the image into public/generated/.
+       */
+      const filename = `${typeof body.name === 'string' && body.name ? body.name : 'image'}.png`;
+      const uploaded = await uploadToCloudinary({
+        env,
+        data: base64ToBytes(imageData),
+        filename,
+        trackingId: typeof body.trackingId === 'string' ? body.trackingId : undefined,
+        uploadedBy: { userId: user.userId, email: user.email },
+      }).catch((error) => {
+        logger.error('Cloudinary upload failed, returning image without a hosted URL', error);
+        return null;
+      });
+
+      return json({ imageData, url: uploaded?.url, publicId: uploaded?.publicId });
     } catch (error) {
       logger.error('Image generation failed', error);
       return json({ error: error instanceof Error ? error.message : 'Image generation failed' }, 502);

@@ -3,7 +3,7 @@ import type { PromptSkill } from './types';
 export const internetAssetsSkill: PromptSkill = {
   name: 'internet-assets',
   description:
-    'Real visual assets for websites: prefer AI-generated images in /generated/, then Unsplash/icons/logos/fonts — never empty placeholders.',
+    'Real visual assets for websites: prefer AI-generated image URLs listed in the message, then Unsplash/icons/logos/fonts — never empty placeholders.',
   triggers:
     /\b(image|images|photo|photos|picture|pictures|unsplash|icon|icons|logo|logos|stock|assets?|avatar|illustration|background image|img|generated)\b/,
   defaultOnFirstMessage: true,
@@ -12,13 +12,13 @@ export const internetAssetsSkill: PromptSkill = {
   When generating ANY website or landing page, fill every image slot with a real asset — never leave placeholders empty.
 
   ## Priority order for photos
-  1. AI-generated files listed in the message under /generated/… (recreated from an uploaded reference when one was provided). Use those exact paths for the listed purposes — never swap them for stock.
+  1. AI-generated image URLs listed in the message (an https:// hosted URL or a /generated/ path; recreated from an uploaded reference when one was provided). Use those exact URLs for the listed purposes — never swap them for stock.
   2. Files the user uploaded into public/.
-  3. Stock photos (Unsplash) only for slots that have no generated/uploaded file.
+  3. Stock photos (Unsplash) only for slots that have no generated/uploaded image.
 
   ## Stock Images via Unsplash (fallback only)
 
-  Use Unsplash Source URLs directly as \`src\` attributes in \`<img>\` tags or CSS \`background-image\` when no /generated/ image covers that slot.
+  Use Unsplash Source URLs directly as \`src\` attributes in \`<img>\` tags or CSS \`background-image\` when no generated image covers that slot.
 
   URL format: \`https://source.unsplash.com/{WIDTH}x{HEIGHT}/?{keyword1},{keyword2}&sig={N}\`
 
@@ -162,7 +162,7 @@ export const internetAssetsSkill: PromptSkill = {
 
   ## When to Apply Automatically (No User Prompt Needed)
 
-  ### Always fill these slots (prefer /generated/ when listed, else Unsplash):
+  ### Always fill these slots (prefer a generated URL from the message when listed, else Unsplash):
   - Hero section (background or foreground photo)
   - About / team section (portraits with \`face,portrait,professional\` keywords for stock)
   - Services / features section (illustrative photos per item, use \`&sig=N\` to vary stock)

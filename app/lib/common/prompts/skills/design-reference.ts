@@ -52,10 +52,10 @@ export const designReferenceSkill: PromptSkill = {
 
   ## Images and icons
   - NEVER place the reference screenshot itself on the site.
-  - Photos in the design: use AI-generated images listed in the message (/generated/…) — those were
-    created from the reference via image-to-image and MUST fill the matching slots. Then the user's
-    uploaded assets. Do not replace them with Unsplash/Pexels/picsum. Only if a slot has no
-    generated file and no upload, use a same-aspect-ratio placeholder
+  - Photos in the design: use the AI-generated images listed in the message (a hosted https:// URL or a
+    /generated/ path) — those were created from the reference via image-to-image and MUST fill the
+    matching slots. Then the user's uploaded assets. Do not replace them with Unsplash/Pexels/picsum.
+    Only if a slot has no generated image and no upload, use a same-aspect-ratio placeholder
     (e.g. https://picsum.photos/seed/<keyword>/<width>/<height>) styled to match.
   - Logos: recreate as text in the right font/weight, or a simple inline SVG.
   - Icons: lucide-react (npm install lucide-react), matching outline/filled style and size.

@@ -47,14 +47,15 @@ export function ReferenceAssetsDialog() {
           ) : (
             <>
               <p className="text-sm text-bolt-elements-textSecondary">
-                {fromEnhancer
-                  ? 'The prompt enhancer suggests these AI-generated images for your site.'
-                  : fromReference
-                    ? 'These images were suggested from your reference.'
-                    : 'These images were planned from your request.'}{' '}
-                Untick any you don't want and edit the descriptions — they are generated with fal.ai
-                {state.referenceImage ? ' (using your uploaded reference as a visual guide)' : ''} and saved to{' '}
-                <code>public/generated/</code> for the build to use instead of stock photos.
+                {`${
+                  fromEnhancer
+                    ? 'The prompt enhancer suggests these AI-generated images for your site.'
+                    : fromReference
+                      ? 'These images were suggested from your reference.'
+                      : 'These images were planned from your request.'
+                } Untick any you don't want and edit the descriptions — they are generated with fal.ai${
+                  state.referenceImage ? ' (using your uploaded reference as a visual guide)' : ''
+                } and hosted so the build uses them by URL instead of stock photos.`}
               </p>
               <div className="flex flex-col gap-3 overflow-y-auto pr-1">
                 {assets.map((asset) => (
@@ -98,13 +99,17 @@ export function ReferenceAssetsDialog() {
                         onChange={(e) => updateReviewAsset(asset.name, { prompt: e.target.value })}
                       />
                       <div className="flex items-center gap-2 text-xs text-bolt-elements-textTertiary">
-                        <code>public/generated/{asset.name}.png</code>
+                        <code className="truncate" title={asset.url || `public/generated/${asset.name}.png`}>
+                          {asset.url || `public/generated/${asset.name}.png`}
+                        </code>
                         {asset.status === 'generating' && (
                           <span className="ml-auto flex items-center gap-1 text-purple-400">
                             <span className="i-svg-spinners:90-ring-with-bg" /> Generating…
                           </span>
                         )}
-                        {asset.status === 'done' && <span className="ml-auto text-green-500">Saved</span>}
+                        {asset.status === 'done' && (
+                          <span className="ml-auto text-green-500">{asset.url ? 'Hosted' : 'Saved'}</span>
+                        )}
                         {asset.status === 'failed' && (
                           <span className="ml-auto truncate text-red-400" title={asset.error}>
                             Failed: {asset.error}

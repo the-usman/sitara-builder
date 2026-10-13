@@ -3,12 +3,14 @@ import { toast } from 'react-toastify';
 import { workbenchStore } from '~/lib/stores/workbench';
 import type { ProviderInfo } from '~/types/model';
 import { WORK_DIR } from '~/utils/constants';
+import { chatId } from '~/lib/persistence/useChatHistory';
 import { describeGeneratedAssets, PUBLIC_ASSET_DIR, type ProposedAsset } from '~/utils/reference-assets';
 
 /*
  * Before a message with a reference image is sent: propose images that match it, wait for the
- * user's approval (ReferenceAssetsDialog), generate the approved ones with fal.ai into
- * public/generated/, and return a note for the build message. Nothing is generated unapproved.
+ * user's approval (ReferenceAssetsDialog), generate the approved ones with fal.ai — uploaded to
+ * Cloudinary (falling back to public/generated/ when Cloudinary isn't configured) — and return a
+ * note for the build message. Nothing is generated unapproved.
  */
 
 export interface ReviewAsset extends ProposedAsset {
@@ -18,6 +20,9 @@ export interface ReviewAsset extends ProposedAsset {
 
   // data URL, once generated
   preview?: string;
+
+  // Cloudinary URL, once uploaded (absent when Cloudinary isn't configured and it fell back to public/)
+  url?: string;
 }
 
 export interface ReferenceAssetsState {
@@ -207,20 +212,32 @@ async function generateOne(asset: ReviewAsset, referenceImage?: string): Promise
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         op: 'generate',
+        name: asset.name,
         prompt: asset.prompt,
         size: asset.size,
+        trackingId: chatId.get() || undefined,
         ...(referenceImage ? { image: referenceImage } : {}),
       }),
     });
-    const data = (await res.json().catch(() => ({}))) as { imageData?: string; error?: string };
+    const data = (await res.json().catch(() => ({}))) as { imageData?: string; url?: string; error?: string };
 
     if (!res.ok || !data.imageData) {
       throw new Error(data.error || res.statusText);
     }
 
+    const preview = `data:image/png;base64,${data.imageData}`;
+
+    // Hosted on Cloudinary: never write the binary into the project — the build uses the URL.
+    if (data.url) {
+      updateReviewAsset(asset.name, { status: 'done', preview, url: data.url });
+
+      return true;
+    }
+
+    // No Cloudinary configured: fall back to the project's public/generated/ folder.
     const bytes = Uint8Array.from(atob(data.imageData), (c) => c.charCodeAt(0));
     await workbenchStore.createFile(`${WORK_DIR}/public/${PUBLIC_ASSET_DIR}/${asset.name}.png`, bytes);
-    updateReviewAsset(asset.name, { status: 'done', preview: `data:image/png;base64,${data.imageData}` });
+    updateReviewAsset(asset.name, { status: 'done', preview });
 
     return true;
   } catch (error) {
@@ -247,7 +264,15 @@ export async function generateApprovedAssets() {
   referenceAssets.set({ ...state, phase: 'generating' });
 
   const results = await Promise.all(approved.map((asset) => generateOne(asset, state.referenceImage)));
-  const generated = approved.filter((_, index) => results[index]);
+
+  /*
+   * generateOne records the result (preview + Cloudinary URL) on the store's assets, not on the
+   * `approved` objects captured above — re-read them so the build note carries the hosted URL.
+   */
+  const latest = referenceAssets.get()?.assets ?? [];
+  const generated = approved
+    .filter((_, index) => results[index])
+    .map((asset) => latest.find((current) => current.name === asset.name) ?? asset);
   const failed = approved.length - generated.length;
 
   if (failed) {
@@ -255,8 +280,12 @@ export async function generateApprovedAssets() {
   }
 
   if (generated.length) {
+    const hosted = generated.filter((asset) => asset.url).length;
+
     toast.success(
-      `Saved ${generated.length} generated image${generated.length > 1 ? 's' : ''} to public/${PUBLIC_ASSET_DIR}/`,
+      hosted === generated.length
+        ? `Generated ${generated.length} image${generated.length > 1 ? 's' : ''}`
+        : `Saved ${generated.length} generated image${generated.length > 1 ? 's' : ''} to public/${PUBLIC_ASSET_DIR}/`,
     );
   }
 

@@ -1,6 +1,8 @@
 import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { getApiKeysFromCookie } from '~/lib/api/cookies';
+import { requireAuth } from '~/lib/auth.server';
 import { generateFalImage, resolveFalKey } from '~/lib/.server/images/fal.server';
+import { uploadToCloudinary } from '~/lib/cloudinary.server';
 
 type Provider = 'openai' | 'fal' | 'gemini';
 
@@ -10,17 +12,33 @@ const SIZE_TO_GEMINI: Record<string, string> = {
   '1024x1792': '9:16',
 };
 
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
+}
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
 export async function action({ context, request }: ActionFunctionArgs) {
   const {
     prompt,
     size = '1024x1024',
     provider = 'fal',
     model,
+    trackingId,
   } = await request.json<{
     prompt: string;
     size?: string;
     provider?: Provider;
     model?: string;
+    trackingId?: string;
   }>();
 
   if (!prompt?.trim()) {
@@ -30,6 +48,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
   const cookieHeader = request.headers.get('Cookie');
   const apiKeys = getApiKeysFromCookie(cookieHeader);
   const env = context.cloudflare?.env as any;
+  const user = await requireAuth(request, env);
 
   const slug =
     prompt
@@ -38,6 +57,8 @@ export async function action({ context, request }: ActionFunctionArgs) {
       .trim()
       .replace(/\s+/g, '-')
       .slice(0, 40) + '.png';
+
+  let imageData: string;
 
   if (provider === 'fal') {
     // Same key lookup / FLUX.2 models as the reference-image flow.
@@ -48,27 +69,39 @@ export async function action({ context, request }: ActionFunctionArgs) {
     }
 
     try {
-      const imageData = await generateFalImage({
+      imageData = await generateFalImage({
         falKey,
         prompt,
         size,
         model: model || 'fal-ai/flux-2-max',
       });
-
-      return new Response(JSON.stringify({ imageData, filename: slug }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'fal.ai generation failed';
       throw new Response(message, { status: 502 });
     }
+  } else if (provider === 'gemini') {
+    imageData = await generateWithGemini({ prompt, size, apiKeys, env });
+  } else {
+    imageData = await generateWithOpenAI({ prompt, size, model: model || 'dall-e-3', apiKeys, env });
   }
 
-  if (provider === 'gemini') {
-    return await generateWithGemini({ prompt, size, apiKeys, env, slug });
-  }
+  /*
+   * Host the image on Cloudinary and record it, so the site can reference a URL instead of
+   * a binary written into the project (which slows the builder down). Null when Cloudinary
+   * isn't configured — the client then falls back to saving it into public/.
+   */
+  const uploaded = await uploadToCloudinary({
+    env,
+    data: base64ToBytes(imageData),
+    filename: slug,
+    trackingId,
+    uploadedBy: { userId: user.userId, email: user.email },
+  }).catch((error) => {
+    console.error('Cloudinary upload failed, returning image without a hosted URL:', error);
+    return null;
+  });
 
-  return await generateWithOpenAI({ prompt, size, model: model || 'dall-e-3', apiKeys, env, slug });
+  return json({ imageData, filename: slug, url: uploaded?.url, publicId: uploaded?.publicId });
 }
 
 // ── Google Gemini Imagen 3 ───────────────────────────────────────────────────
@@ -78,14 +111,12 @@ async function generateWithGemini({
   size,
   apiKeys,
   env,
-  slug,
 }: {
   prompt: string;
   size: string;
   apiKeys: Record<string, string>;
   env: any;
-  slug: string;
-}) {
+}): Promise<string> {
   const geminiKey =
     apiKeys?.GOOGLE_GENERATIVE_AI_API_KEY ||
     env?.GOOGLE_GENERATIVE_AI_API_KEY ||
@@ -122,9 +153,7 @@ async function generateWithGemini({
     throw new Response('No image returned from Gemini', { status: 502 });
   }
 
-  return new Response(JSON.stringify({ imageData, filename: slug }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return imageData;
 }
 
 // ── OpenAI DALL-E ────────────────────────────────────────────────────────────
@@ -135,15 +164,13 @@ async function generateWithOpenAI({
   model,
   apiKeys,
   env,
-  slug,
 }: {
   prompt: string;
   size: string;
   model: string;
   apiKeys: Record<string, string>;
   env: any;
-  slug: string;
-}) {
+}): Promise<string> {
   const openaiKey = apiKeys?.OPENAI_API_KEY || env?.OPENAI_API_KEY || process.env.OPENAI_API_KEY;
 
   if (!openaiKey) {
@@ -165,9 +192,6 @@ async function generateWithOpenAI({
   }
 
   const data = await res.json();
-  const imageData: string = (data as any).data[0].b64_json;
 
-  return new Response(JSON.stringify({ imageData, filename: slug }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return (data as any).data[0].b64_json;
 }

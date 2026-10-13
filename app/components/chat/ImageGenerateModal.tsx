@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Dialog, DialogTitle, DialogRoot } from '~/components/ui/Dialog';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { WORK_DIR } from '~/utils/constants';
+import { chatId } from '~/lib/persistence/useChatHistory';
+import { describeGeneratedAssets } from '~/utils/reference-assets';
 import { toast } from 'react-toastify';
 import { classNames } from '~/utils/classNames';
 import type { ProviderInfo } from '~/types/model';
@@ -64,6 +66,7 @@ interface Props {
   messages?: Array<{ role: string; content: any }>;
   chatModel?: string;
   chatProvider?: ProviderInfo;
+  onInsertText?: (text: string) => void;
 }
 
 export function ImageGenerateModal({
@@ -76,6 +79,7 @@ export function ImageGenerateModal({
   messages,
   chatModel,
   chatProvider,
+  onInsertText,
 }: Props) {
   const [providerId, setProviderId] = useState<ProviderId>('fal');
   const [modelId, setModelId] = useState('fal-ai/flux-2-max');
@@ -83,7 +87,7 @@ export function ImageGenerateModal({
   const [size, setSize] = useState('1024x1024');
   const [loading, setLoading] = useState(false);
   const [suggestLoading, setSuggestLoading] = useState(false);
-  const [generated, setGenerated] = useState<{ data: string; filename: string } | null>(null);
+  const [generated, setGenerated] = useState<{ data: string; filename: string; url?: string } | null>(null);
   const [error, setError] = useState('');
 
   const hasContext = (messages?.length ?? 0) > 0 && chatModel && chatProvider;
@@ -144,7 +148,13 @@ export function ImageGenerateModal({
       const res = await fetch('/api/image-generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, size, provider: providerId, model: modelId }),
+        body: JSON.stringify({
+          prompt,
+          size,
+          provider: providerId,
+          model: modelId,
+          trackingId: chatId.get() || undefined,
+        }),
       });
 
       if (!res.ok) {
@@ -152,7 +162,7 @@ export function ImageGenerateModal({
       }
 
       const json = (await res.json()) as any;
-      setGenerated({ data: json.imageData, filename: json.filename });
+      setGenerated({ data: json.imageData, filename: json.filename, url: json.url });
     } catch (err: any) {
       setError(err.message || 'Generation failed.');
     } finally {
@@ -165,15 +175,31 @@ export function ImageGenerateModal({
       return;
     }
 
-    const { data, filename } = generated;
+    const { data, filename, url } = generated;
     const dataUrl = `data:image/png;base64,${data}`;
     const binary = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
 
-    try {
-      await workbenchStore.createFile(`${WORK_DIR}/public/${filename}`, binary);
-      toast.success(`Image saved to public/${filename}`);
-    } catch (e) {
-      console.error('Failed to save image:', e);
+    if (!url) {
+      /*
+       * Cloudinary isn't configured (the generation route returned no URL): fall back to the
+       * old behaviour and save the binary into the project's public/ folder.
+       */
+      try {
+        await workbenchStore.createFile(`${WORK_DIR}/public/${filename}`, binary);
+        toast.success(`Image saved to public/${filename}`);
+      } catch (e) {
+        console.error('Failed to save image:', e);
+      }
+    } else {
+      /*
+       * Hosted on Cloudinary: don't write the binary into the project (that slows the builder
+       * down). Hand the URL to the chat so the model uses it directly in the site.
+       */
+      onInsertText?.(describeGeneratedAssets([{ name: filename, purpose: prompt.trim().slice(0, 120), url }]));
+      navigator.clipboard.writeText(url).then(
+        () => toast.success('Image hosted on Cloudinary — URL copied'),
+        () => toast.success('Image hosted on Cloudinary'),
+      );
     }
 
     const file = new File([binary], filename, { type: 'image/png' });
@@ -339,7 +365,13 @@ export function ImageGenerateModal({
                 className="w-full rounded-lg border border-bolt-elements-borderColor object-cover max-h-72"
               />
               <p className="text-xs text-bolt-elements-textTertiary">
-                Will be saved as <span className="text-purple-400 font-mono">public/{generated.filename}</span>
+                {generated.url ? (
+                  'Hosted on Cloudinary — used in the site by URL (not saved to the project)'
+                ) : (
+                  <>
+                    Will be saved as <span className="text-purple-400 font-mono">public/{generated.filename}</span>
+                  </>
+                )}
               </p>
             </div>
           )}

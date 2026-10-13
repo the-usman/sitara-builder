@@ -92,9 +92,29 @@ describe('describeGeneratedAssets', () => {
     expect(describeGeneratedAssets([])).toBe('');
   });
 
+  it('lists the hosted URL, not a local path, when the image was uploaded', () => {
+    const note = describeGeneratedAssets([
+      {
+        name: 'hero-background',
+        purpose: 'Hero background',
+        url: 'https://res.cloudinary.com/demo/image/upload/hero.png',
+      },
+    ]);
+
+    expect(note).toContain('https://res.cloudinary.com/demo/image/upload/hero.png — Hero background');
+    expect(note).not.toContain('/generated/hero-background.png');
+  });
+
   it('loads the generated-images skill even when the router did not pick it', () => {
     const note = describeGeneratedAssets([{ name: 'hero-background', purpose: 'Hero background' }]);
     const loaded = selectSkills([`Build a cabin site${note}`], { cwd: '/home/project' }, [], ['internet-assets']);
+
+    expect(loaded.map((skill) => skill.name)).toContain('generated-images');
+  });
+
+  it('loads the generated-images skill for a hosted-URL note too', () => {
+    const note = describeGeneratedAssets([{ name: 'hero', purpose: 'Hero', url: 'https://cdn.example.com/a.png' }]);
+    const loaded = selectSkills([`Build a site${note}`], { cwd: '/home/project' }, [], ['internet-assets']);
 
     expect(loaded.map((skill) => skill.name)).toContain('generated-images');
   });

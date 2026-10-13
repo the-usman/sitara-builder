@@ -92,6 +92,7 @@ interface BaseChatProps {
   data?: JSONValue[] | undefined;
   actionRunner?: ActionRunner;
   onSaveTemplate?: () => void;
+  onInsertText?: (text: string) => void;
 }
 
 export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
@@ -131,6 +132,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
       data,
       actionRunner,
       onSaveTemplate,
+      onInsertText,
     },
     ref,
   ) => {
@@ -829,6 +831,7 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
                         messages={messages as any}
                         chatModel={model}
                         chatProvider={provider}
+                        onInsertText={onInsertText}
                       />
 
                       {model && provider && (
