@@ -26,6 +26,19 @@ export const createChatFromFolder = async (
     }),
   );
 
+  return createChatFromFileContents(fileArtifacts, binaryFiles, folderName);
+};
+
+/**
+ * Builds the messages for a new chat whose project is the given files. Shared by the folder import
+ * and the backup-zip import, which already has file contents rather than browser File objects.
+ */
+export const createChatFromFileContents = async (
+  fileArtifacts: { content: string; path: string }[],
+  binaryFiles: string[],
+  folderName: string,
+  sourceLabel: 'folder' | 'backup' | 'version' = 'folder',
+): Promise<Message[]> => {
   const commands = await detectProjectCommands(fileArtifacts);
   const commandsMessage = createCommandsMessage(commands);
 
@@ -36,7 +49,7 @@ export const createChatFromFolder = async (
 
   const filesMessage: Message = {
     role: 'assistant',
-    content: `I've imported the contents of the "${folderName}" folder.${binaryFilesMessage}
+    content: `I've imported the contents of the "${folderName}" ${sourceLabel}.${binaryFilesMessage}
 
 <boltArtifact id="imported-files" title="Imported Files" type="bundled" >
 ${fileArtifacts
@@ -54,7 +67,7 @@ ${escapeBoltTags(file.content)}
   const userMessage: Message = {
     role: 'user',
     id: generateId(),
-    content: `Import the "${folderName}" folder`,
+    content: `Import the "${folderName}" ${sourceLabel}`,
     createdAt: new Date(),
   };
 

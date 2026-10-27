@@ -7,6 +7,8 @@ import {
   getLinkedGithubRepo,
   listGithubVersions,
   listSnapshotHistory,
+  newChatFromGithubVersion,
+  newChatFromSnapshotVersion,
   restoreGithubVersion,
   restoreSnapshotVersion,
   type GithubVersion,
@@ -24,7 +26,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
   const [repoUrl, setRepoUrl] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
-  const [githubError, setGithubError] = useState(false);
+  const [githubError, setGithubError] = useState<string | undefined>(undefined);
   const [reloadKey, setReloadKey] = useState(0);
   const pendingPushes = useStore(githubPushesPending);
   const previousPending = useRef(pendingPushes);
@@ -57,13 +59,13 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
 
     (async () => {
       // GitHub is the source of truth for linked chats; fall back to the local snapshots if it can't be reached.
-      const versions = linkedRepo ? await listGithubVersions(linkedRepo) : undefined;
-      const local = versions ? [] : await listSnapshotHistory();
+      const github = linkedRepo ? await listGithubVersions(linkedRepo) : undefined;
+      const local = github?.versions ? [] : await listSnapshotHistory();
 
       if (!cancelled) {
-        setGithubVersions(versions);
+        setGithubVersions(github?.versions);
         setEntries(local);
-        setGithubError(Boolean(linkedRepo) && !versions);
+        setGithubError(github?.error);
         setIsLoading(false);
       }
     })();
@@ -98,6 +100,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
         detail: version.description,
         badge: index === 0 ? 'Latest' : undefined,
         restore: () => restoreGithubVersion(repoUrl as string, version),
+        newChat: () => newChatFromGithubVersion(repoUrl as string, version),
       }))
     : entries.map((entry, index) => ({
         key: String(entry.id),
@@ -106,6 +109,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
         detail: entry.snapshot.summary || '',
         badge: undefined,
         restore: () => restoreSnapshotVersion(entry.id),
+        newChat: () => newChatFromSnapshotVersion(entry.id),
       }));
 
   return (
@@ -159,8 +163,21 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
                   )}
 
                   {!isLoading && githubError && (
-                    <div className="p-3 rounded-lg border border-bolt-elements-borderColor text-xs text-bolt-elements-textSecondary">
-                      Couldn't load the GitHub history right now. Showing versions saved in this browser instead.
+                    <div className="flex items-start gap-3 p-3 rounded-lg border border-bolt-elements-borderColor text-xs text-bolt-elements-textSecondary">
+                      <div className="i-ph:warning-circle shrink-0 w-4 h-4 text-amber-500" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-bolt-elements-textPrimary">Couldn't load the version history from GitHub.</p>
+                        <p className="mt-0.5 break-words">{githubError}</p>
+                        {entries.length > 0 && (
+                          <p className="mt-0.5">Showing versions saved in this browser instead.</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setReloadKey((key) => key + 1)}
+                        className="shrink-0 font-medium px-2 py-1 rounded-md bg-bolt-elements-background-depth-3 text-bolt-elements-textPrimary hover:opacity-90"
+                      >
+                        Retry
+                      </button>
                     </div>
                   )}
 
@@ -171,7 +188,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
                     </div>
                   )}
 
-                  {!isLoading && rows.length === 0 && pendingPushes === 0 && (
+                  {!isLoading && rows.length === 0 && pendingPushes === 0 && !githubError && (
                     <div className="py-8 text-center text-sm text-bolt-elements-textSecondary">
                       No saved versions yet. A version is saved automatically each time the AI edits your files.
                     </div>
@@ -199,6 +216,15 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
                             </p>
                           )}
                         </div>
+                        <button
+                          onClick={() => handleRestore(`new:${row.key}`, row.newChat)}
+                          disabled={restoringId !== null}
+                          title="Open this version as a new chat. The current chat stays as it is."
+                          className="shrink-0 flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md border border-bolt-elements-borderColor text-bolt-elements-textPrimary bg-bolt-elements-background-depth-3 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span className="i-ph:chat-circle-dots w-3.5 h-3.5" />
+                          {restoringId === `new:${row.key}` ? 'Creating…' : 'New chat'}
+                        </button>
                         <button
                           onClick={() => handleRestore(row.key, row.restore)}
                           disabled={restoringId !== null}

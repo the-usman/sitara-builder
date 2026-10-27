@@ -23,9 +23,22 @@ const ENV_FALLBACKS: Record<SingleTokenProvider, string[]> = {
   supabase: ['SUPABASE_ACCESS_TOKEN', 'VITE_SUPABASE_ACCESS_TOKEN'],
 };
 
+/**
+ * Tokens pasted into .env or the settings panel often carry surrounding quotes or a trailing
+ * newline/space, which GitHub and others reject as "Bad credentials". Strip both.
+ */
+function normalizeToken(value: string | undefined): string | undefined {
+  const cleaned = value
+    ?.trim()
+    .replace(/^(['"])(.*)\1$/, '$2')
+    .trim();
+
+  return cleaned || undefined;
+}
+
 function fromEnv(provider: SingleTokenProvider, env?: ServerEnv): string | undefined {
   for (const name of ENV_FALLBACKS[provider]) {
-    const value = env?.[name] || (typeof process !== 'undefined' ? process.env?.[name] : undefined);
+    const value = normalizeToken(env?.[name] || (typeof process !== 'undefined' ? process.env?.[name] : undefined));
 
     if (value) {
       return value;
@@ -45,7 +58,7 @@ function fromEnv(provider: SingleTokenProvider, env?: ServerEnv): string | undef
  */
 export async function getProviderToken(provider: SingleTokenProvider, env?: ServerEnv): Promise<string | undefined> {
   const config = await readAppConfig(env);
-  const stored = config[provider]?.token;
+  const stored = normalizeToken(config[provider]?.token);
 
   return stored || fromEnv(provider, env);
 }

@@ -29,9 +29,36 @@ function parseGithubRepoUrl(repoUrl: string | null | undefined): { owner: string
     return undefined;
   }
 
-  const [owner, repo] = parsed.pathname.replace(/^\/+/, '').replace(/\.git$/, '').split('/');
+  const [owner, repo] = parsed.pathname
+    .replace(/^\/+/, '')
+    .replace(/\.git$/, '')
+    .split('/');
 
   return owner && repo ? { owner, repo } : undefined;
+}
+
+/** Passes GitHub's own reason through, so the Version History dialog can say why the list didn't load. */
+async function githubError(response: Response, what: string) {
+  const body = (await response.json().catch(() => ({}))) as { message?: string };
+  const reason = body.message || response.statusText || 'unknown error';
+
+  console.error(`GitHub history: ${what} failed (${response.status}): ${reason}`);
+
+  if (response.status === 401) {
+    return json(
+      {
+        error:
+          'The GitHub token is invalid or expired (GitHub said "Bad credentials"). A super admin needs to paste a new ' +
+          'token in Settings → Connections → GitHub (it overrides GITHUB_TOKEN in .env).',
+      },
+      { status: 502 },
+    );
+  }
+
+  return json(
+    { error: `GitHub ${response.status} while ${what}: ${reason}` },
+    { status: response.status === 404 ? 404 : 502 },
+  );
 }
 
 /** Lists a chat's versions: the commits on its GitHub repo, newest first. */
@@ -56,7 +83,7 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     const repoResponse = await fetch(base, { headers: ghHeaders(token) });
 
     if (!repoResponse.ok) {
-      return json({ error: 'Failed to load version history' }, { status: repoResponse.status === 404 ? 404 : 400 });
+      return githubError(repoResponse, `opening ${parsed.owner}/${parsed.repo}`);
     }
 
     const { default_branch: branch } = (await repoResponse.json()) as { default_branch: string };
@@ -68,7 +95,7 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     });
 
     if (!response.ok) {
-      return json({ error: 'Failed to load version history' }, { status: response.status === 404 ? 404 : 400 });
+      return githubError(response, 'listing commits');
     }
 
     const commits = (await response.json()) as Array<{
@@ -92,7 +119,10 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
     return json({ versions }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('GitHub history error:', error);
-    return json({ error: 'Failed to load version history' }, { status: 500 });
+    return json(
+      { error: `Failed to load version history: ${error instanceof Error ? error.message : String(error)}` },
+      { status: 500 },
+    );
   }
 }
 

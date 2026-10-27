@@ -1,6 +1,7 @@
 import type { Message } from 'ai';
 import { toast } from 'react-toastify';
 import { ImportFolderButton } from '~/components/chat/ImportFolderButton';
+import { ImportZipButton } from '~/components/chat/ImportZipButton';
 import { Button } from '~/components/ui/Button';
 import { classNames } from '~/utils/classNames';
 
@@ -89,6 +90,7 @@ export function ImportButtons(importChat: ((description: string, messages: Messa
               'transition-all duration-200 ease-in-out rounded-lg',
             )}
           />
+          <ImportZipButton importChat={importChat} />
         </div>
       </div>
     </div>
