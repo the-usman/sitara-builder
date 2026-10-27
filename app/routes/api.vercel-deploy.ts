@@ -3,6 +3,19 @@ import type { VercelProjectInfo } from '~/types/vercel';
 import { updateProjectUrl } from '~/lib/project-tracker.server';
 import { requireAuth } from '~/lib/auth.server';
 import { requireProviderToken } from '~/lib/config/provider-tokens.server';
+import { WORK_DIR } from '~/utils/constants';
+
+/*
+ * Files live under WORK_DIR (/home/project) in the workbench, but a Vercel deployment wants
+ * them at the deployment root. Strip that prefix (and any leading slash) so package.json,
+ * vite.config.ts, src/ etc. land at the top level instead of a nested home/project/ folder
+ * Vercel can't detect or build.
+ */
+function toRepoPath(filePath: string): string {
+  const withoutWorkdir = filePath.startsWith(`${WORK_DIR}/`) ? filePath.slice(WORK_DIR.length + 1) : filePath;
+
+  return withoutWorkdir.replace(/^\/+/, '');
+}
 
 // Add loader function to handle GET requests
 export async function loader({ request, context }: LoaderFunctionArgs) {
@@ -216,8 +229,8 @@ export async function action({ request, context }: ActionFunctionArgs) {
     const deploymentFiles = [];
 
     for (const [filePath, content] of Object.entries(files)) {
-      // Ensure file path doesn't start with a slash for Vercel
-      const normalizedPath = filePath.startsWith('/') ? filePath.substring(1) : filePath;
+      // Vercel wants paths relative to the deployment root, with no leading slash.
+      const normalizedPath = toRepoPath(filePath);
       deploymentFiles.push({
         file: normalizedPath,
         data: content,

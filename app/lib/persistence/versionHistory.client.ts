@@ -75,7 +75,7 @@ export function getLinkedGithubRepo(): string | undefined {
 /** Lists the project's GitHub versions, newest first. Returns undefined when they can't be loaded. */
 export async function listGithubVersions(repoUrl: string): Promise<GithubVersion[] | undefined> {
   try {
-    const response = await fetch(`/api/github-history?repoUrl=${encodeURIComponent(repoUrl)}`);
+    const response = await fetch(`/api/github-history?repoUrl=${encodeURIComponent(repoUrl)}`, { cache: 'no-store' });
 
     if (!response.ok) {
       return undefined;

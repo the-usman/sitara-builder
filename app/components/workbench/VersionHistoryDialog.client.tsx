@@ -1,6 +1,8 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useState } from 'react';
+import { useStore } from '@nanostores/react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import { githubPushesPending } from '~/lib/persistence/github-sync.client';
 import {
   getLinkedGithubRepo,
   listGithubVersions,
@@ -22,18 +24,36 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
   const [repoUrl, setRepoUrl] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [githubError, setGithubError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const pendingPushes = useStore(githubPushesPending);
+  const previousPending = useRef(pendingPushes);
+
+  // A push to GitHub just finished: reload so the new version appears without reopening the dialog.
+  useEffect(() => {
+    if (previousPending.current > 0 && pendingPushes === 0) {
+      setReloadKey((key) => key + 1);
+    }
+
+    previousPending.current = pendingPushes;
+  }, [pendingPushes]);
 
   useEffect(() => {
     if (!isOpen) {
-      return;
+      return undefined;
     }
 
     let cancelled = false;
     const linkedRepo = getLinkedGithubRepo();
+    const isReload = reloadKey > 0;
 
-    setIsLoading(true);
+    // On a background reload keep showing the current list instead of flashing the spinner.
+    if (!isReload) {
+      setIsLoading(true);
+      setGithubVersions(undefined);
+    }
+
     setRepoUrl(linkedRepo);
-    setGithubVersions(undefined);
 
     (async () => {
       // GitHub is the source of truth for linked chats; fall back to the local snapshots if it can't be reached.
@@ -43,6 +63,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
       if (!cancelled) {
         setGithubVersions(versions);
         setEntries(local);
+        setGithubError(Boolean(linkedRepo) && !versions);
         setIsLoading(false);
       }
     })();
@@ -50,6 +71,12 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
     return () => {
       cancelled = true;
     };
+  }, [isOpen, reloadKey]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setReloadKey(0);
+    }
   }, [isOpen]);
 
   const handleRestore = async (key: string, restore: () => Promise<boolean>) => {
@@ -124,6 +151,19 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
                 </div>
 
                 <div className="max-h-[360px] overflow-y-auto space-y-2">
+                  {pendingPushes > 0 && (
+                    <div className="flex items-center gap-2 p-3 rounded-lg border border-dashed border-bolt-elements-borderColor text-xs text-bolt-elements-textSecondary">
+                      <div className="i-ph:spinner animate-spin shrink-0" />
+                      Saving your latest changes to GitHub — the new version will appear here in a moment.
+                    </div>
+                  )}
+
+                  {!isLoading && githubError && (
+                    <div className="p-3 rounded-lg border border-bolt-elements-borderColor text-xs text-bolt-elements-textSecondary">
+                      Couldn't load the GitHub history right now. Showing versions saved in this browser instead.
+                    </div>
+                  )}
+
                   {isLoading && (
                     <div className="flex items-center justify-center gap-2 py-8 text-sm text-bolt-elements-textSecondary">
                       <div className="i-ph:spinner animate-spin" />
@@ -131,7 +171,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
                     </div>
                   )}
 
-                  {!isLoading && rows.length === 0 && (
+                  {!isLoading && rows.length === 0 && pendingPushes === 0 && (
                     <div className="py-8 text-center text-sm text-bolt-elements-textSecondary">
                       No saved versions yet. A version is saved automatically each time the AI edits your files.
                     </div>

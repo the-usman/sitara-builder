@@ -1,3 +1,4 @@
+import { atom } from 'nanostores';
 import { toast } from 'react-toastify';
 import { logStore } from '~/lib/stores/logs';
 import type { FileMap } from '~/lib/stores/files';
@@ -11,7 +12,9 @@ const PUSH_DEBOUNCE_MS = 4000;
 
 export interface GithubPushArgs {
   trackingId: string;
-  files: FileMap;
+
+  /** A getter is read when the push actually runs, so a delayed or queued push uploads the latest files. */
+  files: FileMap | (() => FileMap);
   commitMessage?: string;
 
   /** Latest user prompt — lets the server's AI write a meaningful commit description. */
@@ -70,9 +73,42 @@ function toPlainFiles(files: FileMap): Record<string, string> {
   return plain;
 }
 
-/** Uploads one chat's files to its GitHub repo. Never throws — auto-push is a background convenience. */
-export async function pushToGithub(args: GithubPushArgs): Promise<GithubPushResult> {
-  const files = toPlainFiles(args.files);
+/** GitHub pushes waiting or running. The Version History dialog shows a "saving" state and reloads when it drops to 0. */
+export const githubPushesPending = atom(0);
+
+function adjustPending(delta: number): void {
+  githubPushesPending.set(Math.max(0, githubPushesPending.get() + delta));
+}
+
+const inFlightPushes = new Map<string, Promise<GithubPushResult>>();
+
+/**
+ * Uploads one chat's files to its GitHub repo. Never throws — auto-push is a background convenience.
+ * Pushes for the same chat run one at a time: two overlapping pushes would both build on the same
+ * branch head, and the second one's ref update would be rejected, losing that version.
+ */
+export function pushToGithub(args: GithubPushArgs): Promise<GithubPushResult> {
+  const previous = inFlightPushes.get(args.trackingId) ?? Promise.resolve();
+
+  adjustPending(1);
+
+  const run = previous
+    .catch(() => undefined)
+    .then(() => runGithubPush(args))
+    .finally(() => adjustPending(-1));
+
+  inFlightPushes.set(args.trackingId, run);
+  void run.finally(() => {
+    if (inFlightPushes.get(args.trackingId) === run) {
+      inFlightPushes.delete(args.trackingId);
+    }
+  });
+
+  return run;
+}
+
+async function runGithubPush(args: GithubPushArgs): Promise<GithubPushResult> {
+  const files = toPlainFiles(typeof args.files === 'function' ? args.files() : args.files);
 
   if (Object.keys(files).length === 0) {
     return { ok: false };
@@ -135,13 +171,19 @@ export function scheduleGithubPush(args: GithubPushArgs, onSuccess?: (repoUrl: s
 
   if (existing) {
     clearTimeout(existing);
+  } else {
+    adjustPending(1);
   }
 
   pendingPushes.set(
     args.trackingId,
     setTimeout(() => {
       pendingPushes.delete(args.trackingId);
-      void pushToGithub(args).then((result) => {
+
+      const push = pushToGithub(args);
+      adjustPending(-1);
+
+      void push.then((result) => {
         if (result.ok && result.repoUrl) {
           onSuccess?.(result.repoUrl);
         }
@@ -156,5 +198,6 @@ export function cancelPendingGithubPush(trackingId: string): void {
   if (existing) {
     clearTimeout(existing);
     pendingPushes.delete(trackingId);
+    adjustPending(-1);
   }
 }

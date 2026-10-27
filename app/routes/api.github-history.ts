@@ -46,12 +46,26 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
   }
 
   const token = await requireProviderToken('github', env);
+  const base = `${GITHUB_API}/repos/${parsed.owner}/${parsed.repo}`;
 
   try {
-    const response = await fetch(
-      `${GITHUB_API}/repos/${parsed.owner}/${parsed.repo}/commits?per_page=${HISTORY_PAGE_SIZE}`,
-      { headers: ghHeaders(token) },
-    );
+    /*
+     * List from the branch head's exact SHA. GitHub's branch-name commit listing can lag a few seconds
+     * behind a ref just moved by an auto-push, which made a new version show up only "after some time".
+     */
+    const repoResponse = await fetch(base, { headers: ghHeaders(token) });
+
+    if (!repoResponse.ok) {
+      return json({ error: 'Failed to load version history' }, { status: repoResponse.status === 404 ? 404 : 400 });
+    }
+
+    const { default_branch: branch } = (await repoResponse.json()) as { default_branch: string };
+    const refResponse = await fetch(`${base}/git/ref/heads/${branch}`, { headers: ghHeaders(token) });
+    const headSha = refResponse.ok ? ((await refResponse.json()) as { object: { sha: string } }).object.sha : branch;
+
+    const response = await fetch(`${base}/commits?sha=${encodeURIComponent(headSha)}&per_page=${HISTORY_PAGE_SIZE}`, {
+      headers: ghHeaders(token),
+    });
 
     if (!response.ok) {
       return json({ error: 'Failed to load version history' }, { status: response.status === 404 ? 404 : 400 });
@@ -75,7 +89,7 @@ export async function loader({ request, context }: LoaderFunctionArgs) {
       };
     });
 
-    return json({ versions });
+    return json({ versions }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error('GitHub history error:', error);
     return json({ error: 'Failed to load version history' }, { status: 500 });

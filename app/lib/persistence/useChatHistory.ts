@@ -161,7 +161,11 @@ export async function persistFileSnapshot(): Promise<boolean> {
 
   if (metadata?.githubUrl) {
     // GitHub is the source of truth once connected — keep pushing there, skip the heavy Mongo blob.
-    scheduleGithubPush({ trackingId, files: snapshot.files, userPrompt: getLastUserPrompt(messages) });
+    scheduleGithubPush({
+      trackingId,
+      files: () => workbenchStore.files.get(),
+      userPrompt: getLastUserPrompt(messages),
+    });
   }
 
   return pushChat({
@@ -673,7 +677,8 @@ ${value.content}
 
         const githubPushArgs = {
           trackingId,
-          files: workbenchStore.files.get(),
+          // Read at push time: file actions can still be landing after the reply finishes streaming.
+          files: () => workbenchStore.files.get(),
           userPrompt: getLastUserPrompt(allMessages),
           clientChatId: finalChatId,
         };

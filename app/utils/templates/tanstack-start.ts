@@ -30,6 +30,7 @@ const packageJson = {
     '@types/react': '^19.1.0',
     '@types/react-dom': '^19.1.0',
     '@vitejs/plugin-react': '^6.1.2',
+    nitro: 'latest',
     tailwindcss: '^4.3.3',
     typescript: '^5.8.3',
     vite: '^8.3.4',
@@ -62,13 +63,16 @@ export const TANSTACK_START_TEMPLATE: TemplateFile[] = [
     path: 'vite.config.ts',
     content: `import { defineConfig } from 'vite';
 import { tanstackStart } from '@tanstack/react-start/plugin/vite';
+import { nitro } from 'nitro/vite';
 import viteReact from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   // Vite 8 resolves the tsconfig "@/*" alias natively.
   resolve: { tsconfigPaths: true },
-  plugins: [tailwindcss(), tanstackStart(), viteReact()],
+  // nitro() goes after tanstackStart() and before viteReact(): it produces the server output
+  // Vercel (and other hosts) build from, and is what lets Vercel detect the framework.
+  plugins: [tailwindcss(), tanstackStart(), nitro(), viteReact()],
 });
 `,
   },
@@ -144,5 +148,14 @@ function Home() {
 `,
   },
   { path: 'src/styles.css', content: `@import 'tailwindcss';\n` },
-  { path: '.gitignore', content: 'node_modules\n.output\n.vinxi\ndist\n.tanstack\nsrc/routeTree.gen.ts\n' },
+  {
+    /*
+     * `framework` forces Vercel to use the TanStack Start preset instead of trying to guess.
+     * Without it (or when the preset is picked as "Vite" in the dashboard) Vercel treats the
+     * app as a static Vite SPA and the build fails — there is no index.html to serve.
+     */
+    path: 'vercel.json',
+    content: `${JSON.stringify({ $schema: 'https://openapi.vercel.sh/vercel.json', framework: 'tanstack-start' }, null, 2)}\n`,
+  },
+  { path: '.gitignore', content: 'node_modules\n.output\n.vercel\n.vinxi\ndist\n.tanstack\nsrc/routeTree.gen.ts\n' },
 ];
