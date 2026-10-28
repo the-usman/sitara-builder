@@ -1,3 +1,5 @@
+import fileSaver from 'file-saver';
+import JSZip from 'jszip';
 import { toast } from 'react-toastify';
 import { workbenchStore } from '~/lib/stores/workbench';
 import { WORK_DIR } from '~/utils/constants';
@@ -13,6 +15,8 @@ import {
   type SnapshotHistoryEntry,
 } from './db';
 import { writeSnapshotToContainer } from './snapshotFiles.client';
+
+const { saveAs } = fileSaver;
 
 export type { SnapshotHistoryEntry };
 
@@ -174,16 +178,11 @@ export async function restoreGithubVersion(repoUrl: string, version: GithubVersi
   }
 }
 
-/**
- * Opens a version's files as a brand-new chat, leaving the current chat untouched. The new chat gets
- * its own GitHub repo on its first auto-push, like any other new chat.
- */
-async function openFilesAsNewChat(files: FileMap, versionLabel: string): Promise<boolean> {
-  if (!db) {
-    toast.error('Chat storage is not available in this browser.');
-    return false;
-  }
-
+/** A version's files with project-relative paths (`src/App.tsx`), split into text and binary. */
+function collectVersionFiles(files: FileMap): {
+  textFiles: { path: string; content: string }[];
+  binaryFiles: string[];
+} {
   const workdir = WORK_DIR.replace(/^\//, '');
   const textFiles: { path: string; content: string }[] = [];
   const binaryFiles: string[] = [];
@@ -203,6 +202,52 @@ async function openFilesAsNewChat(files: FileMap, versionLabel: string): Promise
     }
   }
 
+  return { textFiles, binaryFiles };
+}
+
+/** Loads a locally saved version's files and a label for it. */
+async function loadSnapshotVersion(historyId: number): Promise<{ files: FileMap; label: string } | undefined> {
+  if (!db) {
+    return undefined;
+  }
+
+  const entry = await getSnapshotHistoryEntry(db, historyId);
+
+  if (!entry) {
+    toast.error('That version is no longer available.');
+    return undefined;
+  }
+
+  return { files: entry.snapshot.files, label: new Date(entry.timestamp).toLocaleString() };
+}
+
+/** Downloads a GitHub version's (commit's) files. */
+async function loadGithubVersion(repoUrl: string, version: GithubVersion): Promise<{ files: FileMap; label: string }> {
+  const response = await fetch(
+    `/api/github-pull?repoUrl=${encodeURIComponent(repoUrl)}&ref=${encodeURIComponent(version.sha)}`,
+  );
+
+  if (!response.ok) {
+    throw new Error('Could not download that version');
+  }
+
+  const { files } = (await response.json()) as { files: FileMap };
+
+  return { files, label: version.title || version.sha.slice(0, 7) };
+}
+
+/**
+ * Opens a version's files as a brand-new chat, leaving the current chat untouched. The new chat gets
+ * its own GitHub repo on its first auto-push, like any other new chat.
+ */
+async function openFilesAsNewChat(files: FileMap, versionLabel: string): Promise<boolean> {
+  if (!db) {
+    toast.error('Chat storage is not available in this browser.');
+    return false;
+  }
+
+  const { textFiles, binaryFiles } = collectVersionFiles(files);
+
   if (textFiles.length === 0) {
     toast.error('That version has no files to open.');
     return false;
@@ -217,21 +262,44 @@ async function openFilesAsNewChat(files: FileMap, versionLabel: string): Promise
   return true;
 }
 
-/** Starts a new chat from a locally saved version. */
-export async function newChatFromSnapshotVersion(historyId: number): Promise<boolean> {
-  if (!db) {
+/**
+ * Saves a version's files as a zip, laid out like the workbench's Download backup (files at the zip
+ * root), so it can be imported again with "Import Zip". Binary files are left out, as in that backup.
+ */
+async function downloadFilesAsZip(files: FileMap, versionLabel: string): Promise<boolean> {
+  const { textFiles } = collectVersionFiles(files);
+
+  if (textFiles.length === 0) {
+    toast.error('That version has no files to download.');
     return false;
   }
 
+  const zip = new JSZip();
+
+  for (const file of textFiles) {
+    zip.file(file.path, file.content);
+  }
+
+  const slug = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 60);
+
+  const fileName = `${slug(description.get() || 'project') || 'project'}_${slug(versionLabel) || 'version'}.zip`;
+
+  saveAs(await zip.generateAsync({ type: 'blob' }), fileName);
+
+  return true;
+}
+
+/** Starts a new chat from a locally saved version. */
+export async function newChatFromSnapshotVersion(historyId: number): Promise<boolean> {
   try {
-    const entry = await getSnapshotHistoryEntry(db, historyId);
+    const version = await loadSnapshotVersion(historyId);
 
-    if (!entry) {
-      toast.error('That version is no longer available.');
-      return false;
-    }
-
-    return await openFilesAsNewChat(entry.snapshot.files, new Date(entry.timestamp).toLocaleString());
+    return version ? await openFilesAsNewChat(version.files, version.label) : false;
   } catch (error) {
     console.error('Failed to start a new chat from a saved version:', error);
     toast.error('Failed to create a new chat from that version.');
@@ -243,20 +311,40 @@ export async function newChatFromSnapshotVersion(historyId: number): Promise<boo
 /** Starts a new chat from a GitHub version (commit), without touching the current chat or its repo. */
 export async function newChatFromGithubVersion(repoUrl: string, version: GithubVersion): Promise<boolean> {
   try {
-    const response = await fetch(
-      `/api/github-pull?repoUrl=${encodeURIComponent(repoUrl)}&ref=${encodeURIComponent(version.sha)}`,
-    );
+    const { files, label } = await loadGithubVersion(repoUrl, version);
 
-    if (!response.ok) {
-      throw new Error('Could not download that version');
-    }
-
-    const { files } = (await response.json()) as { files: FileMap };
-
-    return await openFilesAsNewChat(files, version.title || version.sha.slice(0, 7));
+    return await openFilesAsNewChat(files, label);
   } catch (error) {
     console.error('Failed to start a new chat from a GitHub version:', error);
     toast.error(`Failed to create a new chat: ${error instanceof Error ? error.message : 'unknown error'}`);
+
+    return false;
+  }
+}
+
+/** Downloads a locally saved version as a zip. */
+export async function downloadSnapshotVersion(historyId: number): Promise<boolean> {
+  try {
+    const version = await loadSnapshotVersion(historyId);
+
+    return version ? await downloadFilesAsZip(version.files, version.label) : false;
+  } catch (error) {
+    console.error('Failed to download a saved version:', error);
+    toast.error('Failed to download that version.');
+
+    return false;
+  }
+}
+
+/** Downloads a GitHub version (commit) as a zip. */
+export async function downloadGithubVersion(repoUrl: string, version: GithubVersion): Promise<boolean> {
+  try {
+    const { files, label } = await loadGithubVersion(repoUrl, version);
+
+    return await downloadFilesAsZip(files, label);
+  } catch (error) {
+    console.error('Failed to download a GitHub version:', error);
+    toast.error(`Failed to download that version: ${error instanceof Error ? error.message : 'unknown error'}`);
 
     return false;
   }

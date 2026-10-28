@@ -13,6 +13,7 @@ import OpenAIProvider from './providers/openai';
 import PerplexityProvider from './providers/perplexity';
 import TogetherProvider from './providers/together';
 import TokenGoProvider from './providers/tokengo';
+import NineRouterProvider from './providers/nine-router';
 import XAIProvider from './providers/xai';
 import HyperbolicProvider from './providers/hyperbolic';
 import AmazonBedrockProvider from './providers/amazon-bedrock';
@@ -35,6 +36,7 @@ export {
   XAIProvider,
   TogetherProvider,
   TokenGoProvider,
+  NineRouterProvider,
   LMStudioProvider,
   AmazonBedrockProvider,
   GithubProvider,

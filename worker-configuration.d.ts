@@ -23,6 +23,8 @@ interface Env {
   TOKENGO_API_KEY: string;
   TOKENGO_API_BASE_URL: string;
   TOKENGO_REASONING_EFFORT: string;
+  NINE_ROUTER_API_KEY: string;
+  NINE_ROUTER_API_BASE_URL: string;
   DEEPSEEK_API_KEY: string;
   LMSTUDIO_API_BASE_URL: string;
   GOOGLE_GENERATIVE_AI_API_KEY: string;

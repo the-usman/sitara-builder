@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { githubPushesPending } from '~/lib/persistence/github-sync.client';
 import {
+  downloadGithubVersion,
+  downloadSnapshotVersion,
   getLinkedGithubRepo,
   listGithubVersions,
   listSnapshotHistory,
@@ -92,6 +94,13 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
     }
   };
 
+  // Unlike restore and new chat, a download leaves you where you are, so the dialog stays open.
+  const handleDownload = async (key: string, download: () => Promise<boolean>) => {
+    setRestoringId(key);
+    await download();
+    setRestoringId(null);
+  };
+
   const rows = githubVersions
     ? githubVersions.map((version, index) => ({
         key: version.sha,
@@ -101,6 +110,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
         badge: index === 0 ? 'Latest' : undefined,
         restore: () => restoreGithubVersion(repoUrl as string, version),
         newChat: () => newChatFromGithubVersion(repoUrl as string, version),
+        download: () => downloadGithubVersion(repoUrl as string, version),
       }))
     : entries.map((entry, index) => ({
         key: String(entry.id),
@@ -110,6 +120,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
         badge: undefined,
         restore: () => restoreSnapshotVersion(entry.id),
         newChat: () => newChatFromSnapshotVersion(entry.id),
+        download: () => downloadSnapshotVersion(entry.id),
       }));
 
   return (
@@ -122,7 +133,7 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="w-[90vw] md:w-[480px]"
+            className="w-[90vw] md:w-[560px]"
           >
             <Dialog.Content
               className="bg-white dark:bg-bolt-elements-background-depth-1 rounded-lg border border-bolt-elements-borderColor dark:border-bolt-elements-borderColor-dark shadow-xl"
@@ -216,6 +227,21 @@ export function VersionHistoryDialog({ isOpen, onClose }: VersionHistoryDialogPr
                             </p>
                           )}
                         </div>
+                        <button
+                          onClick={() => handleDownload(`zip:${row.key}`, row.download)}
+                          disabled={restoringId !== null}
+                          title="Download this version as a zip (can be opened again with Import Zip)"
+                          aria-label="Download this version as a zip"
+                          className="shrink-0 flex items-center justify-center w-8 h-8 rounded-md border border-bolt-elements-borderColor text-bolt-elements-textPrimary bg-bolt-elements-background-depth-3 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <span
+                            className={
+                              restoringId === `zip:${row.key}`
+                                ? 'i-ph:spinner animate-spin w-4 h-4'
+                                : 'i-ph:download-simple w-4 h-4'
+                            }
+                          />
+                        </button>
                         <button
                           onClick={() => handleRestore(`new:${row.key}`, row.newChat)}
                           disabled={restoringId !== null}
